@@ -1,0 +1,11 @@
+FROM openclaw-sandbox-lite:latest
+
+COPY client /opt/mcporter-proxy-client
+WORKDIR /opt/mcporter-proxy-client
+RUN npm install -g .
+
+ENV MCPORTER_PROXY_URL="http://host.docker.internal:9022/call"
+ENV MCPORTER_PROXY_TIMEOUT="120000"
+ENV MCPORTER_PROXY_RETRIES="2"
+
+RUN which mcporter-proxy

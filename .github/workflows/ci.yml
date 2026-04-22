@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: ./client
+
+      - name: Run client tests
+        run: |
+          npm install -g mcporter || true
+          node tests/mock_server.js &
+          sleep 2
+          MCPORTER_PROXY_URL=http://localhost:9023/call node tests/test_client.js
+        working-directory: .

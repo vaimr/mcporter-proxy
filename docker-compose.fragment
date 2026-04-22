@@ -1,0 +1,15 @@
+services:
+  mcporter-proxy:
+    build: ./server
+    container_name: mcporter-proxy
+    ports:
+      - "127.0.0.1:9022:8080"
+    volumes:
+      - ~/.mcporter:/root/.mcporter:ro
+    environment:
+      - MCPORTER_PROXY_ALLOWED_TOOLS=atlassian.jira_*,atlassian.confluence_*,cognee.*
+      - MCPORTER_PROXY_TIMEOUT=120
+      - MCPORTER_PROXY_LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - openclaw-net

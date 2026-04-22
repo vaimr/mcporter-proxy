@@ -1,0 +1,12 @@
+{
+  "name": "mcporter-proxy",
+  "version": "1.0.0",
+  "description": "HTTP proxy client for mcporter – drop-in replacement for mcporter CLI",
+  "bin": {
+    "mcporter-proxy": "./mcporter-proxy.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
