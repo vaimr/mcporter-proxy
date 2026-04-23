@@ -3,20 +3,22 @@ const assert = require("assert");
 
 const client = "./client/mcporter-proxy.js";
 
-function run(args) {
-  const result = spawnSync("node", [client, ...args], { encoding: "utf-8" });
+function run(args, env = {}) {
+  const result = spawnSync("node", [client, ...args], {
+    encoding: "utf-8",
+    env: { ...process.env, ...env },
+  });
   return { stdout: result.stdout, stderr: result.stderr, status: result.status };
 }
 
-// Test basic call
-console.log("Testing basic call...");
-const { status, stdout } = run(["call", "cognee.list_data"]);
-assert.strictEqual(status, 0, "Expected exit 0");
-console.log("✅ Basic call succeeded");
+console.log("Testing error when MCPROXY_AUTH_KEY is not set...");
+const noAuth = run(["call", "cognee.list_data"]);
+assert.strictEqual(noAuth.status, 1, "Should exit with error when MCPROXY_AUTH_KEY not set");
+assert.ok(noAuth.stderr.includes("MCPROXY_AUTH_KEY is not set"), "Should show auth key error");
+console.log("✅ Error when MCPROXY_AUTH_KEY not set");
 
-// Test forbidden tool (should be blocked by proxy)
-console.log("Testing forbidden tool...");
-const forbidden = run(["call", "some.unknown_tool"]);
+console.log("Testing forbidden tool (with valid auth key)...");
+const forbidden = run(["call", "some.unknown_tool"], { MCPROXY_AUTH_KEY: "agent-key" });
 assert.notStrictEqual(forbidden.status, 0, "Expected non-zero exit for forbidden tool");
 console.log("✅ Forbidden tool blocked");
 

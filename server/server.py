@@ -13,10 +13,12 @@ import logging
 import os
 import re
 import subprocess
+import time
+from functools import lru_cache
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-# Configure logging
 LOG_LEVEL = os.environ.get("MCPORTER_PROXY_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -24,6 +26,82 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("mcporter-proxy")
+
+SCRIPT_DIR = Path(__file__).parent
+ENV_MAP_PATH = SCRIPT_DIR / "mcp_env_map.json"
+TOKEN_CACHE_TTL = 300
+
+
+def load_env_map() -> Dict[str, str]:
+    try:
+        with open(ENV_MAP_PATH) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+MCP_ENV_MAP = load_env_map()
+logger.info(f"Loaded MCP env map: {MCP_ENV_MAP}")
+
+_token_cache: Dict[str, Tuple[str, float]] = {}
+
+
+def get_cached_token(key: str) -> Optional[str]:
+    if key in _token_cache:
+        token, timestamp = _token_cache[key]
+        if time.time() - timestamp < TOKEN_CACHE_TTL:
+            return token
+        del _token_cache[key]
+    return None
+
+
+def set_cached_token(key: str, token: str) -> None:
+    _token_cache[key] = (token, time.time())
+
+
+def get_token_from_gloves(secrets_key: str) -> Optional[str]:
+    cached = get_cached_token(secrets_key)
+    if cached is not None:
+        logger.debug(f"Token cache hit for {secrets_key}")
+        return cached
+
+    logger.debug(f"Calling gloves secrets get {secrets_key}")
+    try:
+        result = subprocess.run(
+            ["gloves", "secrets", "get", secrets_key],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            token = result.stdout.strip()
+            set_cached_token(secrets_key, token)
+            logger.info(f"Token retrieved and cached for {secrets_key}")
+            return token
+        else:
+            logger.warning(
+                f"gloves returned no token for {secrets_key}: {result.stderr or 'empty'}"
+            )
+    except FileNotFoundError:
+        logger.error("gloves executable not found - is it installed?")
+    except subprocess.TimeoutExpired:
+        logger.error(f"gloves timeout for {secrets_key}")
+    except Exception as e:
+        logger.error(f"gloves error for {secrets_key}: {e}")
+    return None
+
+
+def parse_auth_key(auth_key: str) -> Optional[Tuple[str, str]]:
+    if not auth_key or "-" not in auth_key:
+        return None
+    parts = auth_key.split("-", 1)
+    if len(parts) != 2:
+        return None
+    return (parts[0], parts[1])
+
+
+def get_mcptype(tool: str) -> str:
+    return tool.split(".")[0] if "." in tool else tool
 
 
 class MCPorterProxyHandler(BaseHTTPRequestHandler):
@@ -82,7 +160,10 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Missing 'tool' field")
             return
 
-        logger.info(f"Incoming request: tool={tool}")
+        auth_key = self.headers.get("X-MCP-Auth-Key")
+        logger.info(
+            f"Incoming request: tool={tool} auth_key={'present' if auth_key else 'absent'}"
+        )
 
         if not self._is_tool_allowed(tool):
             logger.warning(f"Tool blocked: {tool}")
@@ -105,12 +186,31 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
 
         logger.debug(f"Executing: {' '.join(cmd)}")
 
+        env = os.environ.copy()
+
+        if auth_key:
+            auth_parts = parse_auth_key(auth_key)
+            if auth_parts:
+                agent_id, agent_key = auth_parts
+                mcptype = get_mcptype(tool)
+                secrets_key = f"{mcptype}-{agent_id}-{agent_key}"
+                logger.debug(f"Looking up secrets key: {secrets_key}")
+
+                token = get_token_from_gloves(secrets_key)
+                if token:
+                    env_var_name = MCP_ENV_MAP.get(mcptype, "CHANGEME")
+                    env[env_var_name] = token
+                    logger.info(f"Set {env_var_name} for {mcptype}")
+            else:
+                logger.warning(f"Invalid auth key format: {auth_key}")
+
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                env=env,
             )
         except subprocess.TimeoutExpired:
             logger.error(f"Command timed out after {self.timeout}s: {tool}")
@@ -137,12 +237,12 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(response).encode("utf-8"))
 
     def log_message(self, format, *args):
-        # Suppress default HTTP logging - we use structured logging instead
         pass
 
 
 def main():
     port = int(os.environ.get("MCPORTER_PROXY_PORT", "8080"))
+    logger.info(f"Token cache TTL: {TOKEN_CACHE_TTL}s")
     server = HTTPServer(("0.0.0.0", port), MCPorterProxyHandler)
     print(f"mcporter-proxy listening on 0.0.0.0:{port}")
     server.serve_forever()

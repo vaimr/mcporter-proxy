@@ -5,12 +5,12 @@ const http = require("http");
 
 const args = process.argv.slice(2);
 
-// Configuration via environment variables
 const PROXY_URL = process.env.MCPORTER_PROXY_URL || "http://host.docker.internal:9022/call";
 const TIMEOUT_MS = parseInt(process.env.MCPORTER_PROXY_TIMEOUT || "120000", 10);
 const MAX_RETRIES = parseInt(process.env.MCPORTER_PROXY_RETRIES || "2", 10);
 const RETRY_DELAY_MS = parseInt(process.env.MCPORTER_PROXY_RETRY_DELAY || "1000", 10);
 const LOG_LEVEL = (process.env.MCPORTER_PROXY_LOG_LEVEL || "info").toUpperCase();
+const AUTH_KEY = process.env.MCPROXY_AUTH_KEY;
 
 const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
 const currentLevel = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.INFO;
@@ -22,12 +22,6 @@ function log(level, ...messages) {
   }
 }
 
-/**
- * Parse arguments as mcporter does.
- * Supports:
- *   mcporter-proxy call tool key=value key2=value2
- *   mcporter-proxy call 'tool(key: value, key2: value2)'
- */
 function parseCallArgs(args) {
   if (args.length < 1) {
     console.error("Usage: mcporter-proxy call <tool> [key=value ...]");
@@ -75,10 +69,12 @@ function parseCallArgs(args) {
   return { tool, args: toolArgs };
 }
 
-/**
- * Perform HTTP request with retries.
- */
 async function proxyRequest(payload) {
+  if (!AUTH_KEY) {
+    console.error("MCPROXY_AUTH_KEY is not set");
+    process.exit(1);
+  }
+
   const url = new URL(PROXY_URL);
   const client = url.protocol === "https:" ? https : http;
   const body = JSON.stringify(payload);
@@ -95,6 +91,7 @@ async function proxyRequest(payload) {
     headers: {
       "Content-Type": "application/json",
       "Content-Length": contentLength,
+      "X-MCP-Auth-Key": AUTH_KEY,
     },
     timeout: TIMEOUT_MS,
   };

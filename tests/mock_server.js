@@ -54,27 +54,27 @@ const MOCK_RESPONSES = {
     returncode: 1,
   },
   "atlassian.jira_search": {
-    stdout: `{"result": "[{\\"id\\":\\"10001\\",\\"key\\":\\"NIVABOY-1\\",\\"summary\\":\\"Test issue\\"}]"}`,
+    stdout: '{"result": [{"id": "10001", "key": "NIVABOY-1", "summary": "Test issue"}]}',
     stderr: "",
     returncode: 0,
   },
   "atlassian.jira_get_issue": {
-    stdout: `{"id": "10001", "key": "NIVABOY-1", "summary": "Test issue", "status": "In Progress"}`,
+    stdout: '{"id": "10001", "key": "NIVABOY-1", "summary": "Test issue", "status": "In Progress"}',
     stderr: "",
     returncode: 0,
   },
   "atlassian.jira_get_all_projects": {
-    stdout: `{"result": "[{\\"key\\":\\"NIVABOY\\",\\"name\\":\\"NivaBoy Project\\"}]"}`,
+    stdout: '{"result": "[{\"key\":\"NIVABOY\",\"name\":\"NivaBoy Project\"}]"}',
     stderr: "",
     returncode: 0,
   },
   "atlassian.confluence_search": {
-    stdout: `{"result": "[{\\"id\\":\\"258736469\\",\\"title\\":\\"Architecture Overview\\",\\"url\\":\\"https://conf.devsun.ru/pages/viewpage.action?pageId=258736469\\"}]"}`,
+    stdout: '{"result": "[{\"id\":\"258736469\",\"title\":\"Architecture Overview\",\"url\":\"https://conf.devsun.ru/pages/viewpage.action?pageId=258736469\"}]"}',
     stderr: "",
     returncode: 0,
   },
   "atlassian.confluence_get_page": {
-    stdout: `{"error": "Failed to retrieve page by ID '123456789': Page not found"}`,
+    stdout: '{"error": "Failed to retrieve page by ID \'123456789\': Page not found"}',
     stderr: "",
     returncode: 1,
   },
@@ -98,11 +98,11 @@ function isToolAllowed(tool) {
 
 function getMockResponse(tool) {
   if (MOCK_RESPONSES[tool]) {
-    return MOCK_RESPONSES[tool];
+    return { ...MOCK_RESPONSES[tool] };
   }
   for (const [key, response] of Object.entries(MOCK_RESPONSES)) {
     if (tool.startsWith(key.replace(/\..*$/, ""))) {
-      return response;
+      return { ...response };
     }
   }
   return {
@@ -178,7 +178,15 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    const auth_key = req.headers["x-mcp-auth-key"];
+    if (auth_key) {
+      log("DEBUG", `X-MCP-Auth-Key received: ${auth_key.substring(0, 8)}...`);
+    }
+
     const response = getMockResponse(tool);
+    if (auth_key) {
+      response.auth_key_received = auth_key;
+    }
     log("DEBUG", `Response: ${JSON.stringify(response).substring(0, 100)}...`);
 
     res.writeHead(200, { "Content-Type": "application/json" });

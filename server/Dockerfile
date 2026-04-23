@@ -5,6 +5,7 @@ RUN apk add --no-cache nodejs npm && \
     rm -rf /var/cache/apk/*
 
 COPY server.py /app/server.py
+COPY mcp_env_map.json /app/mcp_env_map.json
 WORKDIR /app
 
 ENV MCPORTER_PROXY_PORT=8080
