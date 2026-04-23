@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     networks:
       - openclaw-net
+    volumes:
+      - ~/.openclaw:/root/.openclaw:ro
 
   mcporter-proxy:
     build: ./server
@@ -13,6 +15,7 @@ services:
       - "127.0.0.1:9022:8080"
     volumes:
       - ~/.mcporter:/root/.mcporter:ro
+      - ~/.openclaw/secrets:/root/.openclaw/secrets:ro
     environment:
       - MCPORTER_PROXY_ALLOWED_TOOLS=github.*,gitlab.*,atlassian.jira_*,atlassian.confluence_*,cognee.*
       - MCPORTER_PROXY_TIMEOUT=120

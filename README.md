@@ -98,6 +98,10 @@ mcporter-proxy call github.list_repos visibility=private
 
 ## Docker Compose Integration
 
+### Gloves Secrets Storage
+
+Gloves stores secrets encrypted at `~/.openclaw/secrets/` on the host. This directory must be mounted into the `mcporter-proxy` container for gloves to access the secrets.
+
 ```yaml
 services:
   gloves:
@@ -106,6 +110,8 @@ services:
     restart: unless-stopped
     networks:
       - openclaw-net
+    volumes:
+      - ~/.openclaw:/root/.openclaw:ro
 
   mcporter-proxy:
     build: ./server
@@ -114,6 +120,7 @@ services:
       - "127.0.0.1:9022:8080"
     volumes:
       - ~/.mcporter:/root/.mcporter:ro
+      - ~/.openclaw/secrets:/root/.openclaw/secrets:ro
     environment:
       - MCPORTER_PROXY_ALLOWED_TOOLS=github.*,gitlab.*,atlassian.jira_*,atlassian.confluence_*,cognee.*
       - MCPORTER_PROXY_TIMEOUT=120
@@ -123,9 +130,20 @@ services:
       - openclaw-net
 ```
 
-## Setting Up Secrets in Gloves
+### Initial Setup
 
-For each agent and each MCP type, create a secret in gloves:
+1. Initialize gloves on the host:
+
+```bash
+# Install gloves CLI (if not already installed)
+curl -fsSL https://github.com/go-skida/gloves/releases/latest/download/gloves-linux-amd64 -o /usr/local/bin/gloves
+chmod +x /usr/local/bin/gloves
+
+# Initialize gloves runtime (creates ~/.openclaw/secrets and ~/.openclaw/.gloves.toml)
+gloves bootstrap
+```
+
+2. Create secrets:
 
 ```bash
 # Generate a secure key
@@ -182,5 +200,6 @@ python3 tests/test_server.py
 - Tokens never stored in proxy code or environment — fetched live from gloves
 - `gloves run` injects secrets directly as environment variables (not passed as CLI args)
 - `mcporter` credentials mounted read-only from host
+- Gloves secrets mounted read-only from host (`~/.openclaw/secrets:ro`)
 - No external network exposure (binds to localhost in Docker)
 - Auth key format: `<agentId>-<agentKey>` (no secrets transmitted, only reference)
