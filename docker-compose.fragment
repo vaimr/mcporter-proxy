@@ -1,6 +1,6 @@
 services:
   gloves:
-    image: ghcr.io/go-skida/gloves:latest
+    image: ghcr.io/heyAyushh/gloves:latest
     container_name: gloves
     restart: unless-stopped
     networks:

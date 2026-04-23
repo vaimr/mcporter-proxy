@@ -105,7 +105,7 @@ Gloves stores secrets encrypted at `~/.openclaw/secrets/` on the host. This dire
 ```yaml
 services:
   gloves:
-    image: ghcr.io/go-skida/gloves:latest
+    image: ghcr.io/heyAyushh/gloves:latest
     container_name: gloves
     restart: unless-stopped
     networks:
@@ -136,7 +136,7 @@ services:
 
 ```bash
 # Install gloves CLI (if not already installed)
-curl -fsSL https://github.com/go-skida/gloves/releases/latest/download/gloves-linux-amd64 -o /usr/local/bin/gloves
+curl -fsSL https://github.com/heyAyushh/gloves/releases/latest/download/gloves-linux-amd64 -o /usr/local/bin/gloves
 chmod +x /usr/local/bin/gloves
 
 # Initialize gloves runtime (creates ~/.openclaw/secrets and ~/.openclaw/.gloves.toml)
