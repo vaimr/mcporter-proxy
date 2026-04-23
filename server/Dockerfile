@@ -1,8 +1,10 @@
 FROM python:3.12-alpine
 
-RUN apk add --no-cache nodejs npm && \
+RUN apk add --no-cache nodejs npm curl && \
     npm install -g mcporter && \
-    rm -rf /var/cache/apk/*
+    curl -fsSL https://github.com/go-skida/gloves/releases/latest/download/gloves-linux-amd64 -o /usr/local/bin/gloves && \
+    chmod +x /usr/local/bin/gloves && \
+    rm -rf /var/cache/apk/* /root/.cache
 
 COPY server.py /app/server.py
 COPY mcp_env_map.json /app/mcp_env_map.json

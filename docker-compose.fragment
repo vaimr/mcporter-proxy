@@ -13,9 +13,8 @@ services:
       - "127.0.0.1:9022:8080"
     volumes:
       - ~/.mcporter:/root/.mcporter:ro
-      - /usr/local/bin/gloves:/usr/local/bin/gloves:ro
     environment:
-      - MCPORTER_PROXY_ALLOWED_TOOLS=atlassian.jira_*,atlassian.confluence_*,cognee.*
+      - MCPORTER_PROXY_ALLOWED_TOOLS=github.*,gitlab.*,atlassian.jira_*,atlassian.confluence_*,cognee.*
       - MCPORTER_PROXY_TIMEOUT=120
       - MCPORTER_PROXY_LOG_LEVEL=INFO
     restart: unless-stopped

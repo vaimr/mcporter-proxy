@@ -7,9 +7,9 @@ HTTP proxy for MCPorter — enables MCP tools from sandboxed agents with secure 
 MCPorter is a CLI tool for calling MCP (Model Context Protocol) tools. The proxy allows sandboxed agents to execute MCPorter commands through a secure HTTP API with access control and token management.
 
 ```
-┌─────────────┐     HTTP      ┌─────────────┐     subprocess    ┌──────────┐
+┌─────────────┐     HTTP      ┌─────────────┐     gloves run     ┌──────────┐
 │   Agent     │ ───────────►  │  mcporter   │ ─────────────────►│ mcporter│
-│  (sandbox)  │   POST /call  │   -proxy    │   mcporter call   │   CLI   │
+│  (sandbox)  │   POST /call  │   -proxy    │   --env VAR=...    │   CLI   │
 └─────────────┘               └─────────────┘                   └──────────┘
                                   │
                                   ▼
@@ -27,9 +27,8 @@ MCPorter is a CLI tool for calling MCP (Model Context Protocol) tools. The proxy
 2. Server extracts `agentId` and `agentKey` from the auth key
 3. Server extracts `mcptype` from the tool name (prefix before first `.`)
 4. Server constructs secrets key: `<mcptype>-<agentId>-<agentKey>`
-5. Server calls `gloves secrets get <key>` to retrieve the token
-6. Token is cached for 5 minutes
-7. Server sets the appropriate environment variable (from `mcp_env_map.json`) and runs `mcporter`
+5. Server runs `gloves run --env {VAR}=gloves://{secrets_key} -- mcporter call ...`
+6. `gloves` injects the secret as an environment variable and executes `mcporter`
 
 ### Configuration File: `mcp_env_map.json`
 
@@ -42,13 +41,13 @@ Located next to `server.py`, this file maps MCP prefixes to environment variable
 }
 ```
 
-When a token is retrieved from gloves, it's set as the environment variable specified for that `mcptype`.
+When a token is retrieved from gloves, it's injected as the environment variable specified for that `mcptype`.
 
 ## Components
 
 ### Server (Python)
 
-HTTP server that receives tool call requests, fetches tokens from gloves, and executes `mcporter` commands.
+HTTP server that receives tool call requests, runs commands via `gloves run`, and executes `mcporter` commands.
 
 **Environment variables:**
 | Variable | Default | Description |
@@ -115,9 +114,8 @@ services:
       - "127.0.0.1:9022:8080"
     volumes:
       - ~/.mcporter:/root/.mcporter:ro
-      - /usr/local/bin/gloves:/usr/local/bin/gloves:ro
     environment:
-      - MCPORTER_PROXY_ALLOWED_TOOLS=github.*,gitlab.*,cognee.*
+      - MCPORTER_PROXY_ALLOWED_TOOLS=github.*,gitlab.*,atlassian.jira_*,atlassian.confluence_*,cognee.*
       - MCPORTER_PROXY_TIMEOUT=120
       - MCPORTER_PROXY_LOG_LEVEL=INFO
     restart: unless-stopped
@@ -156,7 +154,7 @@ gloves secrets set "confluence-borets-${AGENT_KEY}" --value "conf_zzzz"
 gloves secrets set "jira-borets-${AGENT_KEY}" --value "jira_token"
 ```
 
-3. Restart the proxy: `docker compose restart mcporter-proxy`
+3. Rebuild and restart the proxy: `docker compose build mcporter-proxy && docker compose restart mcporter-proxy`
 
 ## Running Tests
 
@@ -181,8 +179,8 @@ python3 tests/test_server.py
 ## Security
 
 - Tool whitelist via `MCPORTER_PROXY_ALLOWED_TOOLS` pattern matching
-- Tokens fetched from gloves secrets manager (not stored in proxy)
-- Token caching (5 min TTL) reduces gloves calls
+- Tokens never stored in proxy code or environment — fetched live from gloves
+- `gloves run` injects secrets directly as environment variables (not passed as CLI args)
 - `mcporter` credentials mounted read-only from host
 - No external network exposure (binds to localhost in Docker)
-- Auth key format: `<agentId>-<agentKey>` (no secrets in transit)
+- Auth key format: `<agentId>-<agentKey>` (no secrets transmitted, only reference)

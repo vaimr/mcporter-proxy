@@ -31,8 +31,26 @@ exit 0
 
         cls.mock_gloves_path = os.path.join(cls.mock_dir, "gloves")
         with open(cls.mock_gloves_path, "w") as f:
-            f.write("""#!/bin/bash
-echo "mock_token_from_gloves"
+            f.write(f"""#!/bin/bash
+# Parse gloves run --env VAR=gloves://key -- command args
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --env)
+            shift
+            env_spec="$1"
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            shift
+            ;;
+    esac
+    shift
+done
+# Execute remaining command (mcporter)
+exec "$@"
 exit 0
 """)
         os.chmod(cls.mock_gloves_path, 0o755)
