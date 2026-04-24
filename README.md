@@ -27,7 +27,7 @@ MCPorter is a CLI tool for calling MCP (Model Context Protocol) tools. The proxy
 2. Server extracts `agentId` and `agentKey` from the auth key
 3. Server extracts `mcptype` from the tool name (prefix before first `.`)
 4. Server constructs secrets key: `<mcptype>-<agentId>-<agentKey>`
-5. Server runs `gloves run --env {VAR}=gloves://{secrets_key} -- mcporter call ...`
+5. Server runs `gloves --agent {agentId} run --env {VAR}=gloves://{secrets_key} -- mcporter call ...`
 6. `gloves` injects the secret as an environment variable and executes `mcporter`
 
 ### Configuration File: `mcp_env_map.json`
@@ -132,15 +132,18 @@ chmod +x /usr/local/bin/gloves
 gloves bootstrap
 ```
 
-2. Create secrets:
+2. Create agent identity and secrets:
 
 ```bash
 # Generate a secure key
 AGENT_KEY=$(openssl rand -hex 32)
 
-# Set secrets for different MCP types
-gloves secrets set "github-borets-${AGENT_KEY}" --value "ghp_xxxxxxxxxxxx"
-gloves secrets set "gitlab-borets-${AGENT_KEY}" --value "glpat-yyyyyyyyyyyy"
+# Create agent identity in gloves (agent_id matches your auth key prefix)
+gloves set-identity --agent borets
+
+# Set secrets for different MCP types, scoped to agent
+gloves --agent borets secrets set "github-${AGENT_KEY}" --value "ghp_xxxxxxxxxxxx"
+gloves --agent borets secrets set "gitlab-${AGENT_KEY}" --value "glpat-yyyyyyyyyyyy"
 ```
 
 The agent will use: `MCPORTER_PROXY_AUTH_KEY=borets-${AGENT_KEY}`
@@ -157,8 +160,8 @@ echo '{"github":"GITHUB_PERSONAL_ACCESS_TOKEN","gitlab":"GITLAB_TOKEN","confluen
 2. Create secrets in gloves:
 
 ```bash
-gloves secrets set "confluence-borets-${AGENT_KEY}" --value "conf_zzzz"
-gloves secrets set "jira-borets-${AGENT_KEY}" --value "jira_token"
+gloves --agent borets secrets set "confluence-${AGENT_KEY}" --value "conf_zzzz"
+gloves --agent borets secrets set "jira-${AGENT_KEY}" --value "jira_token"
 ```
 
 3. Rebuild and restart the proxy: `docker compose build mcporter-proxy && docker compose restart mcporter-proxy`

@@ -144,9 +144,13 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 mcptype = get_mcptype(tool)
                 secrets_key = f"{mcptype}-{agent_id}-{agent_key}"
                 env_var_name = MCP_ENV_MAP.get(mcptype, "CHANGEME")
-                logger.debug(f"gloves run --env {env_var_name}=gloves://{secrets_key}")
+                logger.debug(
+                    f"gloves --agent {agent_id} run --env {env_var_name}=gloves://{secrets_key}"
+                )
                 exec_cmd = [
                     "gloves",
+                    "--agent",
+                    agent_id,
                     "run",
                     "--env",
                     f"{env_var_name}=gloves://{secrets_key}",
