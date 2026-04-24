@@ -10,7 +10,7 @@ const TIMEOUT_MS = parseInt(process.env.MCPORTER_PROXY_TIMEOUT || "120000", 10);
 const MAX_RETRIES = parseInt(process.env.MCPORTER_PROXY_RETRIES || "2", 10);
 const RETRY_DELAY_MS = parseInt(process.env.MCPORTER_PROXY_RETRY_DELAY || "1000", 10);
 const LOG_LEVEL = (process.env.MCPORTER_PROXY_LOG_LEVEL || "info").toUpperCase();
-const AUTH_KEY = process.env.MCPROXY_AUTH_KEY;
+const AUTH_KEY = process.env.MCPORTER_PROXY_AUTH_KEY;
 
 const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
 const currentLevel = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.INFO;
@@ -71,7 +71,7 @@ function parseCallArgs(args) {
 
 async function proxyRequest(payload) {
   if (!AUTH_KEY) {
-    console.error("MCPROXY_AUTH_KEY is not set");
+    console.error("MCPORTER_PROXY_AUTH_KEY is not set");
     process.exit(1);
   }
 

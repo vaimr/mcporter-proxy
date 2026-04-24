@@ -78,7 +78,7 @@ Response:
 
 ### Client (Node.js)
 
-Drop-in CLI replacement for `mcporter`. Requires `MCPROXY_AUTH_KEY` environment variable.
+Drop-in CLI replacement for `mcporter`. Requires `MCPORTER_PROXY_AUTH_KEY` environment variable.
 
 **Environment variables:**
 | Variable | Default | Description |
@@ -88,11 +88,11 @@ Drop-in CLI replacement for `mcporter`. Requires `MCPROXY_AUTH_KEY` environment 
 | `MCPORTER_PROXY_RETRIES` | `2` | Number of retry attempts |
 | `MCPORTER_PROXY_RETRY_DELAY` | `1000` | Delay between retries in milliseconds |
 | `MCPORTER_PROXY_LOG_LEVEL` | `INFO` | Log level: DEBUG, INFO, WARN, ERROR |
-| `MCPROXY_AUTH_KEY` | **(required)** | Auth key in format `<agentId>-<agentKey>` |
+| `MCPORTER_PROXY_AUTH_KEY` | **(required)** | Auth key in format `<agentId>-<agentKey>` |
 
 **Usage:**
 ```bash
-export MCPROXY_AUTH_KEY=borets-abc123
+export MCPORTER_PROXY_AUTH_KEY=borets-abc123
 mcporter-proxy call github.list_repos visibility=private
 ```
 
@@ -104,15 +104,6 @@ Gloves stores secrets encrypted at `~/.openclaw/secrets/` on the host. This dire
 
 ```yaml
 services:
-  gloves:
-    image: ghcr.io/heyAyushh/gloves:latest
-    container_name: gloves
-    restart: unless-stopped
-    networks:
-      - openclaw-net
-    volumes:
-      - ~/.openclaw:/root/.openclaw:ro
-
   mcporter-proxy:
     build: ./server
     container_name: mcporter-proxy
@@ -126,8 +117,6 @@ services:
       - MCPORTER_PROXY_TIMEOUT=120
       - MCPORTER_PROXY_LOG_LEVEL=INFO
     restart: unless-stopped
-    networks:
-      - openclaw-net
 ```
 
 ### Initial Setup
@@ -154,7 +143,7 @@ gloves secrets set "github-borets-${AGENT_KEY}" --value "ghp_xxxxxxxxxxxx"
 gloves secrets set "gitlab-borets-${AGENT_KEY}" --value "glpat-yyyyyyyyyyyy"
 ```
 
-The agent will use: `MCPROXY_AUTH_KEY=borets-${AGENT_KEY}`
+The agent will use: `MCPORTER_PROXY_AUTH_KEY=borets-${AGENT_KEY}`
 
 ## Adding New MCP Types
 
