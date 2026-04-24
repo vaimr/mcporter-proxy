@@ -1,4 +1,1 @@
-{
-  "github": "GITHUB_PERSONAL_ACCESS_TOKEN",
-  "gitlab": "GITLAB_TOKEN"
-}
+{"github": ["GITHUB_PERSONAL_ACCESS_TOKEN"], "gitlab": ["GITLAB_TOKEN"]}

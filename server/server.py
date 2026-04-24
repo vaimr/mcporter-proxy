@@ -6,6 +6,8 @@ Configuration via environment variables:
   - MCPORTER_PROXY_ALLOWED_TOOLS: comma-separated list of tool patterns (supports * wildcard)
   - MCPORTER_PROXY_TIMEOUT: execution timeout in seconds (default 120)
   - MCPORTER_PROXY_LOG_LEVEL: log level (DEBUG, INFO, WARNING, ERROR, CRITICAL; default INFO)
+  - MCPROXY_SECRETS_PREFIX: prefix for secrets keys (default "agents")
+  - MCPROXY_SECRETS_SEPARATOR: separator for secrets keys (default "/")
 """
 
 import json
@@ -42,16 +44,38 @@ logger.info(f"Loaded MCP env map: {MCP_ENV_MAP}")
 
 
 def parse_auth_key(auth_key: str) -> Optional[Tuple[str, str]]:
-    if not auth_key or "-" not in auth_key:
+    if not auth_key:
+        logger.warning(f"Auth key is empty")
         return None
-    parts = auth_key.split("-", 1)
-    if len(parts) != 2:
-        return None
-    return (parts[0], parts[1])
+    if "-" in auth_key:
+        parts = auth_key.split("-", 1)
+        if len(parts) == 2:
+            return (parts[0], parts[1])
+    if "/" in auth_key:
+        parts = auth_key.split("/", 1)
+        if len(parts) == 2:
+            return (parts[0], parts[1])
+    logger.warning(
+        f"Invalid auth key format: expected <agentId>-<agentKey> or <agentId>/<agentKey>, got: {auth_key}"
+    )
+    return None
 
 
 def get_mcptype(tool: str) -> str:
     return tool.split(".")[0] if "." in tool else tool
+
+
+def get_auth_key_separator(auth_key: str) -> str:
+    if "/" in auth_key:
+        return "/"
+    if "-" in auth_key:
+        return "-"
+    return "/"
+
+
+DEFAULT_SECRETS_PREFIX = "agents"
+SECRETS_PREFIX = os.environ.get("MCPROXY_SECRETS_PREFIX", DEFAULT_SECRETS_PREFIX)
+SECRETS_SEPARATOR = os.environ.get("MCPROXY_SECRETS_SEPARATOR", "")
 
 
 class MCPorterProxyHandler(BaseHTTPRequestHandler):
@@ -142,18 +166,28 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             if auth_parts:
                 agent_id, agent_key = auth_parts
                 mcptype = get_mcptype(tool)
-                secrets_key = f"{mcptype}-{agent_id}-{agent_key}"
-                env_var_name = MCP_ENV_MAP.get(mcptype, "CHANGEME")
-                logger.debug(
-                    f"gloves --agent {agent_id} run --env {env_var_name}=gloves://{secrets_key}"
+                sep = (
+                    SECRETS_SEPARATOR
+                    if SECRETS_SEPARATOR
+                    else get_auth_key_separator(auth_key)
                 )
+                env_vars = MCP_ENV_MAP.get(mcptype, "CHANGEME")
+                if isinstance(env_vars, str):
+                    env_vars = [env_vars]
+                env_flags = []
+                for i, env_var in enumerate(env_vars):
+                    if i == 0:
+                        secrets_key = f"{SECRETS_PREFIX}{sep}{agent_id}{sep}{mcptype}{sep}{agent_key}"
+                    else:
+                        secrets_key = f"{SECRETS_PREFIX}{sep}{agent_id}{sep}{mcptype}{sep}{agent_key}{sep}{i}"
+                    env_flags.extend(["--env", f"{env_var}=gloves://{secrets_key}"])
+                    logger.debug(f"gloves env: {env_var}=gloves://{secrets_key}")
                 exec_cmd = [
                     "gloves",
                     "--agent",
                     agent_id,
                     "run",
-                    "--env",
-                    f"{env_var_name}=gloves://{secrets_key}",
+                    *env_flags,
                     "--",
                     *cmd,
                 ]
