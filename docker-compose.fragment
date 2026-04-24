@@ -1,13 +1,4 @@
 services:
-  gloves:
-    image: ghcr.io/heyAyushh/gloves:latest
-    container_name: gloves
-    restart: unless-stopped
-    networks:
-      - openclaw-net
-    volumes:
-      - ~/.openclaw:/root/.openclaw:ro
-
   mcporter-proxy:
     build: ./server
     container_name: mcporter-proxy
@@ -21,5 +12,3 @@ services:
       - MCPORTER_PROXY_TIMEOUT=120
       - MCPORTER_PROXY_LOG_LEVEL=INFO
     restart: unless-stopped
-    networks:
-      - openclaw-net

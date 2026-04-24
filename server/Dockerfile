@@ -1,10 +1,13 @@
-FROM python:3.12-alpine
+FROM python:3.12-slim
 
-RUN apk add --no-cache nodejs npm curl && \
-    npm install -g mcporter && \
-    curl -fsSL https://github.com/heyAyushh/gloves/releases/latest/download/gloves-linux-amd64 -o /usr/local/bin/gloves && \
-    chmod +x /usr/local/bin/gloves && \
-    rm -rf /var/cache/apk/* /root/.cache
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    npm \
+    curl \
+    && rm -rf /var/lib/apt/lists/* /root/.cache \
+    && npm install -g mcporter \
+    && curl -fsSL https://github.com/heyAyushh/gloves/releases/download/v0.5.11/gloves-0.5.11-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/gloves
 
 COPY server.py /app/server.py
 COPY mcp_env_map.json /app/mcp_env_map.json

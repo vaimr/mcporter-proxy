@@ -136,7 +136,7 @@ services:
 
 ```bash
 # Install gloves CLI (if not already installed)
-curl -fsSL https://github.com/heyAyushh/gloves/releases/latest/download/gloves-linux-amd64 -o /usr/local/bin/gloves
+curl -fsSL https://github.com/heyAyushh/gloves/releases/download/v0.5.11/gloves-0.5.11-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C /usr/local/bin
 chmod +x /usr/local/bin/gloves
 
 # Initialize gloves runtime (creates ~/.openclaw/secrets and ~/.openclaw/.gloves.toml)
