@@ -1,1 +1,141 @@
-{"github": {"env": ["GITHUB_PERSONAL_ACCESS_TOKEN"], "attachment_download": {"type": "rest_api", "method": "GET", "url_template": "https://httpbin.org/get", "headers": {"Authorization": "Bearer {token}"}}}, "confluence_test": {"env": ["CONFLUENCE_TOKEN"], "attachment_download": {"type": "mcp_tool_redirect", "tool_name": "test_tool_download", "tool_args_mapping": {"file_id": "{attachment_id}"}, "download_url_field": "download_url", "headers": {"Authorization": "Bearer {token}"}}}, "mcp_tool_test": {"env": ["TEST_TOKEN"], "attachment_download": {"type": "mcp_tool", "tool_name": "test_tool_direct", "tool_args_mapping": {"file_id": "{file_id}"}}}}
+{
+  "github": {
+    "env": [
+      "GITHUB_PERSONAL_ACCESS_TOKEN"
+    ],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://httpbin.org/get",
+      "headers": {
+        "Authorization": "Bearer {token}"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "{upload_url}",
+      "headers": {
+        "Authorization": "Bearer {token}",
+        "Content-Type": "application/octet-stream"
+      }
+    }
+  },
+  "confluence_test": {
+    "env": [
+      "CONFLUENCE_TOKEN"
+    ],
+    "attachment_download": {
+      "type": "mcp_tool_redirect",
+      "tool_name": "test_tool_download",
+      "tool_args_mapping": {
+        "file_id": "{attachment_id}"
+      },
+      "download_url_field": "download_url",
+      "headers": {
+        "Authorization": "Bearer {token}"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://confluence.example.com/wiki/rest/api/content/{page_id}/child/attachment",
+      "headers": {
+        "Authorization": "Bearer {token}",
+        "X-Atlassian-Token": "no-check"
+      }
+    }
+  },
+  "mcp_tool_test": {
+    "env": [
+      "TEST_TOKEN"
+    ],
+    "attachment_download": {
+      "type": "mcp_tool",
+      "tool_name": "test_tool_direct",
+      "tool_args_mapping": {
+        "file_id": "{file_id}"
+      }
+    },
+    "attachment_upload": {
+      "type": "mcp_tool",
+      "tool_name": "test_tool_upload",
+      "tool_args_mapping": {
+        "page_id": "{page_id}",
+        "filename": "{filename}"
+      }
+    }
+  },
+  "gitlab": {
+    "env": [
+      "GITLAB_TOKEN"
+    ],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://gitlab.com/api/v4/projects/{project_id}/repository/files/{file_path}/raw?ref={ref}",
+      "headers": {
+        "PRIVATE-TOKEN": "{token}"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://gitlab.com/api/v4/projects/{project_id}/uploads",
+      "headers": {
+        "PRIVATE-TOKEN": "{token}"
+      }
+    }
+  },
+  "confluence": {
+    "env": [
+      "CONFLUENCE_API_TOKEN",
+      "CONFLUENCE_BASE_URL"
+    ],
+    "attachment_download": {
+      "type": "mcp_tool_redirect",
+      "tool_name": "atlassian.confluence_download_attachment",
+      "tool_args_mapping": {
+        "page_id": "{page_id}",
+        "filename": "{filename}"
+      },
+      "download_url_field": "download_url",
+      "headers": {
+        "Authorization": "Bearer {token}"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://{base_url}/wiki/rest/api/content/{page_id}/child/attachment",
+      "headers": {
+        "Authorization": "Bearer {token}",
+        "X-Atlassian-Token": "no-check"
+      }
+    }
+  },
+  "jira": {
+    "env": [
+      "JIRA_API_TOKEN",
+      "JIRA_EMAIL"
+    ],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://{base_url}/rest/api/3/attachment/content/{attachment_id}",
+      "headers": {
+        "Authorization": "Basic {basic_auth}",
+        "Accept": "application/octet-stream"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://{base_url}/rest/api/3/issue/{issue_key}/attachments",
+      "headers": {
+        "Authorization": "Basic {basic_auth}",
+        "X-Atlassian-Token": "no-check"
+      }
+    }
+  }
+}

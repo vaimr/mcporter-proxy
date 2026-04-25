@@ -10,6 +10,7 @@ const args = process.argv.slice(2);
 const PROXY_URL = process.env.MCPORTER_PROXY_URL || "http://host.docker.internal:9022";
 const CALL_PATH = "/call";
 const DOWNLOAD_PATH = "/download-attachment";
+const UPLOAD_PATH = "/upload-attachment";
 const TIMEOUT_MS = parseInt(process.env.MCPORTER_PROXY_TIMEOUT || "120000", 10);
 const MAX_RETRIES = parseInt(process.env.MCPORTER_PROXY_RETRIES || "2", 10);
 const RETRY_DELAY_MS = parseInt(process.env.MCPORTER_PROXY_RETRY_DELAY || "1000", 10);
@@ -215,6 +216,138 @@ async function parseDownloadArgs(args) {
   return { mcptype, args: downloadArgs, outputPath };
 }
 
+async function parseUploadArgs(args) {
+  if (args.length < 1) {
+    console.error("Usage: mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]");
+    process.exit(1);
+  }
+
+  const mcptype = args[0];
+  const uploadArgs = {};
+  let filePath = null;
+  let contentType = "application/octet-stream";
+
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--file" && i + 1 < args.length) {
+      filePath = args[++i];
+    } else if (arg.startsWith("--file=")) {
+      filePath = arg.slice("--file=".length);
+    } else if (arg === "--content-type" && i + 1 < args.length) {
+      contentType = args[++i];
+    } else if (arg.startsWith("--content-type=")) {
+      contentType = arg.slice("--content-type=".length);
+    } else {
+      const eqIndex = arg.indexOf("=");
+      if (eqIndex > 0) {
+        const key = arg.slice(0, eqIndex);
+        let value = arg.slice(eqIndex + 1);
+        try {
+          value = JSON.parse(value);
+        } catch (e) {}
+        uploadArgs[key] = value;
+      }
+    }
+  }
+
+  log("DEBUG", `Parsed upload: mcptype=${mcptype}, args=${JSON.stringify(uploadArgs)}, file=${filePath}, contentType=${contentType}`);
+  return { mcptype, args: uploadArgs, filePath, contentType };
+}
+
+async function proxyUploadRequest(mcptype, args, filePath, contentType) {
+  if (!AUTH_KEY) {
+    console.error("MCPORTER_PROXY_AUTH_KEY is not set");
+    process.exit(1);
+  }
+
+  if (!filePath) {
+    console.error("Error: --file <path> is required for upload command");
+    process.exit(1);
+  }
+
+  const url = new URL(UPLOAD_PATH, PROXY_URL);
+  const client = url.protocol === "https:" ? https : http;
+
+  let fileContent;
+  try {
+    fileContent = fs.readFileSync(filePath);
+  } catch (e) {
+    console.error(`Failed to read file ${filePath}: ${e.message}`);
+    process.exit(1);
+  }
+
+  const filename = path.basename(filePath);
+  const boundary = "simpleboundary";
+  const bodyParts = [
+    `--${boundary}\r\n`,
+    `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n`,
+    `Content-Type: ${contentType}\r\n\r\n`,
+  ];
+  const bodyPre = bodyParts.join("");
+  const bodyPost = `\r\n--${boundary}--\r\n`;
+  const body = Buffer.concat([
+    Buffer.from(bodyPre),
+    fileContent,
+    Buffer.from(bodyPost),
+  ]);
+
+  log("DEBUG", `Proxy URL: ${url.href}`);
+  log("DEBUG", `Uploading file: ${filename} (${fileContent.length} bytes)`);
+
+  const requestOptions = {
+    hostname: url.hostname,
+    port: url.port || (url.protocol === "https:" ? 443 : 80),
+    path: url.pathname + url.search,
+    method: "POST",
+    headers: {
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      "Content-Length": body.length,
+      "X-MCP-Auth-Key": AUTH_KEY,
+      "X-Target-Platform": mcptype,
+      "X-Target-Args": JSON.stringify(args),
+    },
+    timeout: TIMEOUT_MS,
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = client.request(requestOptions, (res) => {
+      let data = "";
+      res.on("data", (chunk) => data += chunk);
+      res.on("end", () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            const json = JSON.parse(data);
+            log("INFO", `Upload succeeded: ${JSON.stringify(json)}`);
+            console.log(JSON.stringify(json, null, 2));
+            resolve(json);
+          } catch (e) {
+            log("WARN", `Failed to parse response JSON`);
+            console.log(data);
+            resolve(null);
+          }
+        } else {
+          const errorMsg = `Upload failed: ${res.statusCode} ${res.statusMessage}`;
+          log("ERROR", `${errorMsg} | Response: ${data ? data.substring(0, 200) : 'N/A'}`);
+          console.error(errorMsg);
+          if (data) console.error(data);
+          process.exit(1);
+        }
+      });
+    });
+    req.on("error", (err) => {
+      log("ERROR", `Connection error: ${err.message}`);
+      reject(err);
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      log("ERROR", "Request timeout");
+      reject(new Error("Request timeout"));
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
 async function main() {
   const command = args[0];
 
@@ -233,21 +366,29 @@ async function main() {
       { streamToFile: true, outputPath }
     );
     process.exit(0);
+  } else if (command === "upload") {
+    const { mcptype, args: uploadArgs, filePath, contentType } = parseUploadArgs(args.slice(1));
+    await proxyUploadRequest(mcptype, uploadArgs, filePath, contentType);
+    process.exit(0);
   } else if (command === "help") {
     console.log(`mcporter-proxy - MCP Proxy Client
 
 Usage:
   mcporter-proxy call <tool> [args]
   mcporter-proxy download <platform> [args] [--output <path>]
+  mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]
   mcporter-proxy help
 
 Commands:
   call      Execute an MCP tool
   download Download an attachment
+  upload    Upload an attachment
 
 Examples:
   mcporter-proxy call github.list_repos visibility=private
   mcporter-proxy download github owner=octocat repo=hello-world asset_id=123 --output release.zip
+  mcporter-proxy upload confluence page_id=123456 name=report.pdf --file ./report.pdf
+  mcporter-proxy upload jira issue_key=PROJ-123 name=attachment.zip --file ./attachment.zip
 `);
     process.exit(0);
   } else {

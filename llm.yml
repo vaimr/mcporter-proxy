@@ -1,6 +1,6 @@
 name: mcporter-proxy
 description: |
-  MCP proxy server that provides secure tool execution and file attachment downloads.
+  MCP proxy server that provides secure tool execution and file attachment downloads/uploads.
   Tokens are never exposed to agents - they're retrieved from gloves secrets manager.
 endpoints:
   - path: /call
@@ -69,6 +69,48 @@ endpoints:
       400: Unknown mcptype or missing arguments
       502: Download failed (upstream error)
 
+  - path: /upload-attachment
+    method: POST
+    description: Upload file attachment via multipart/form-data
+    headers:
+      X-MCP-Auth-Key:
+        type: string
+        description: Auth key for agent (required)
+      X-Target-Platform:
+        type: string
+        description: Platform name (github, gitlab, confluence, jira)
+      X-Target-Args:
+        type: string
+        description: JSON object with platform-specific arguments
+      Content-Type:
+        type: string
+        description: multipart/form-data with boundary
+    request:
+      type: multipart/form-data
+      description: File as form-data part with name="file"
+      properties:
+        file:
+          type: string
+          format: binary
+          description: File content
+    response:
+      type: object
+      properties:
+        success:
+          type: boolean
+        id:
+          type: string
+          description: Attachment ID returned by platform
+        url:
+          type: string
+          description: URL to access the uploaded attachment
+        filename:
+          type: string
+          description: Original filename
+    errors:
+      400: Missing headers, invalid platform, or malformed multipart
+      502: Upload failed (upstream error)
+
 authentication:
   header: X-MCP-Auth-Key
   format: '"<agentId>-<agentKey>" or "<agentId>/<agentKey>"'
@@ -124,9 +166,42 @@ examples:
     response:
       description: Multipart response containing file binary
 
+  - description: Upload file to Confluence
+    request:
+      headers:
+        Content-Type: multipart/form-data; boundary=simpleboundary
+        X-MCP-Auth-Key: myagent-mykey
+        X-Target-Platform: confluence
+        X-Target-Args: '{"page_id":"123456","name":"report.pdf"}'
+      body:
+        description: Multipart form with file part
+    response:
+      success: true
+      id: "att123456"
+      url: "https://conf.example.com/wiki/download/attachments/123456/report.pdf"
+      filename: report.pdf
+
+  - description: Upload file to Jira
+    request:
+      headers:
+        Content-Type: multipart/form-data; boundary=simpleboundary
+        X-MCP-Auth-Key: myagent-mykey
+        X-Target-Platform: jira
+        X-Target-Args: '{"issue_key":"PROJ-123","name":"attachment.zip"}'
+      body:
+        description: Multipart form with file part
+    response:
+      success: true
+      id: "abc123"
+      url: "https://jira.example.com/secure/attachment/abc123/attachment.zip"
+      filename: attachment.zip
+
 cli_usage:
   tool_call: mcporter-proxy call <tool> [args]
   download: mcporter-proxy download <platform> [args] [--output <path>]
+  upload: mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]
   examples:
     - mcporter-proxy call github.list_repos visibility=private
     - mcporter-proxy download github owner=octocat repo=hello-world asset_id=123 --output release.zip
+    - mcporter-proxy upload confluence page_id=123456 name=report.pdf --file ./report.pdf
+    - mcporter-proxy upload jira issue_key=PROJ-123 name=attachment.zip --file ./attachment.zip

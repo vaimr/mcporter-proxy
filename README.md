@@ -118,6 +118,18 @@ Just list the environment variables your MCP type needs:
 | `max_base64_size` | number | No | `5242880` (5MB) | Max base64 content size for `mcp_tool` type |
 | `tool_timeout` | number | No | `60` | MCP tool execution timeout in seconds |
 
+**`attachment_upload` fields:**
+
+| Field | Type | Required | Default | Description |
+|:------|:-----|:---------|:--------|:------------|
+| `type` | string | Yes | - | `rest_api` or `mcp_tool` |
+| `url_template` | string | For rest_api | - | URL with `{placeholder}` placeholders |
+| `method` | string | No | `POST` | HTTP method: POST |
+| `headers` | object | No | `{}` | Template values with `{token}`, `{arg_name}` |
+| `tool_name` | string | For mcp_tool | - | MCP tool name |
+| `tools_allowed` | array | No | - | List of allowed MCP tools |
+| `default_tool` | string | For mcp_tool | - | Default MCP tool to call |
+
 **Download types:**
 - `rest_api` - Direct HTTP request to platform API
 - `mcp_tool_redirect` - MCP tool returns download URL, proxy streams it
@@ -189,6 +201,38 @@ Request body:
 
 Response: `multipart/form-data` streaming the file content.
 
+**Endpoint:** `POST /upload-attachment`
+
+Uploads file attachments to platforms without exposing tokens to the agent.
+
+Request headers:
+- `X-MCP-Auth-Key`: `<agentId>-<agentKey>` (same as other endpoints)
+- `X-Target-Platform`: platform name (`github`, `gitlab`, `confluence`, `jira`)
+- `X-Target-Args`: JSON object with platform-specific arguments
+- `Content-Type`: `multipart/form-data; boundary=<boundary>`
+- `Content-Length`: size of multipart body
+
+Request body: `multipart/form-data` with file part
+
+**X-Target-Args by platform:**
+
+| Platform | Required args | Example |
+|:---------|:------------|:--------|
+| github | `owner`, `repo`, `upload_url` | `{"owner":"octocat","repo":"hello-world","upload_url":"https://uploads.github.com/...","name":"release.zip"}` |
+| gitlab | `project_id` | `{"project_id":"12345","name":"file.pdf"}` |
+| confluence | `page_id` | `{"page_id":"123456","name":"document.pdf"}` |
+| jira | `issue_key` | `{"issue_key":"PROJ-123","name":"attachment.zip"}` |
+
+Response:
+```json
+{
+  "success": true,
+  "id": "att123456",
+  "url": "https://conf.example.com/download/attachments/12345/report.pdf",
+  "filename": "report.pdf"
+}
+```
+
 **Authentication:** Both endpoints use `X-MCP-Auth-Key` header with format `<agentId>-<agentKey>` or `<agentId>/<agentKey>`.
 
 ### Client (Node.js)
@@ -215,6 +259,10 @@ mcporter-proxy call github.list_repos visibility=private
 
 # Download attachment
 mcporter-proxy download github owner=octocat repo=hello-world asset_id=123 --output release.zip
+
+# Upload attachment
+mcporter-proxy upload confluence page_id=123456 name=report.pdf --file ./report.pdf
+mcporter-proxy upload jira issue_key=PROJ-123 name=attachment.zip --file ./attachment.zip
 
 # Show help
 mcporter-proxy help

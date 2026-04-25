@@ -11,6 +11,7 @@ Configuration via environment variables:
 """
 
 import http.client
+import io
 import json
 import logging
 import os
@@ -35,27 +36,42 @@ ENV_MAP_PATH = SCRIPT_DIR / "mcp_env_map.json"
 
 UPSTREAM_CONNECT_TIMEOUT = 10
 UPSTREAM_READ_TIMEOUT = 300
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024
+BOUNDARY_BYTES = b"simpleboundary"
+MULTIPART_BOUNDARY = "simpleboundary"
 
 
 def validate_config(config: Dict[str, Any], mcptype: str) -> List[str]:
     errors = []
     if isinstance(config, list):
         return errors
+
     ad = config.get("attachment_download")
-    if not ad:
-        return errors
+    if ad:
+        download_type = ad.get("type")
+        if download_type not in ("rest_api", "mcp_tool_redirect", "mcp_tool"):
+            errors.append(f"Invalid download type '{download_type}' for {mcptype}")
+        elif download_type == "rest_api":
+            if not ad.get("url_template"):
+                errors.append(f"Missing url_template for {mcptype} download")
+        elif download_type in ("mcp_tool_redirect", "mcp_tool"):
+            if not ad.get("tool_name"):
+                errors.append(f"Missing tool_name for {mcptype} download")
 
-    download_type = ad.get("type")
-    if download_type not in ("rest_api", "mcp_tool_redirect", "mcp_tool"):
-        errors.append(f"Invalid type '{download_type}' for {mcptype}")
-        return errors
+    au = config.get("attachment_upload")
+    if au:
+        upload_type = au.get("type")
+        if upload_type not in ("rest_api", "mcp_tool"):
+            errors.append(f"Invalid upload type '{upload_type}' for {mcptype}")
+        elif upload_type == "rest_api":
+            if not au.get("url_template"):
+                errors.append(f"Missing url_template for {mcptype} upload")
+            if not au.get("headers"):
+                errors.append(f"Missing headers for {mcptype} upload")
+        elif upload_type == "mcp_tool":
+            if not au.get("tool_name"):
+                errors.append(f"Missing tool_name for {mcptype} upload")
 
-    if download_type == "rest_api":
-        if not ad.get("url_template"):
-            errors.append(f"Missing url_template for {mcptype} rest_api")
-    elif download_type in ("mcp_tool_redirect", "mcp_tool"):
-        if not ad.get("tool_name"):
-            errors.append(f"Missing tool_name for {mcptype} {download_type}")
     return errors
 
 
@@ -89,11 +105,23 @@ def parse_auth_key(auth_key: str) -> Optional[Tuple[str, str]]:
         return None
     if "-" in auth_key:
         parts = auth_key.split("-", 1)
-        if len(parts) == 2:
+        if len(parts) == 2 and parts[0] and parts[1]:
             return (parts[0], parts[1])
     if "/" in auth_key:
         parts = auth_key.split("/", 1)
-        if len(parts) == 2:
+        if len(parts) == 2 and parts[0] and parts[1]:
+            return (parts[0], parts[1])
+    logger.warning(
+        f"Invalid auth key format: expected <agentId>-<agentKey> or <agentId>/<agentKey>, got: {auth_key}"
+    )
+    return None
+    if "-" in auth_key:
+        parts = auth_key.split("-", 1)
+        if len(parts) == 2 and parts[0] and parts[1]:
+            return (parts[0], parts[1])
+    if "/" in auth_key:
+        parts = auth_key.split("/", 1)
+        if len(parts) == 2 and parts[0] and parts[1]:
             return (parts[0], parts[1])
     logger.warning(
         f"Invalid auth key format: expected <agentId>-<agentKey> or <agentId>/<agentKey>, got: {auth_key}"
@@ -215,14 +243,26 @@ def build_headers(
     extra_secrets: Dict[str, str],
     args: Dict[str, Any],
 ) -> Dict[str, str]:
+    import base64
+
     headers = {}
     for key, value in headers_template.items():
         result = value
         if token and "{token}" in result:
             result = result.replace("{token}", token)
         if "{email}" in result:
-            email = extra_secrets.get("email", "")
+            email = extra_secrets.get("email", "") or extra_secrets.get(
+                "JIRA_EMAIL", ""
+            )
             result = result.replace("{email}", email)
+        if "{basic_auth}" in result:
+            email = extra_secrets.get("email", "") or extra_secrets.get(
+                "JIRA_EMAIL", ""
+            )
+            auth_string = f"{email}:{token}"
+            result = result.replace(
+                "{basic_auth}", base64.b64encode(auth_string.encode()).decode()
+            )
         for arg_key, arg_val in args.items():
             result = result.replace(f"{{{arg_key}}}", str(arg_val))
         headers[key] = result
@@ -252,7 +292,7 @@ def download_via_rest(
     parsed_url = urllib.parse.urlparse(url)
     conn = http.client.HTTPSConnection(
         parsed_url.netloc,
-        timeout=UPSTREAM_CONNECT_TIMEOUT,
+        timeout=(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT),
     )
     conn.connect()
     conn.putrequest(method, parsed_url.path, skip_host=True)
@@ -354,7 +394,7 @@ def download_via_mcp_redirect(
 
     conn = http.client.HTTPSConnection(
         parsed_url.netloc,
-        timeout=UPSTREAM_CONNECT_TIMEOUT,
+        timeout=(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT),
     )
     conn.connect()
     conn.putrequest("GET", parsed_url.path, skip_host=True)
@@ -422,7 +462,7 @@ def download_via_mcp_direct(
 
             conn = http.client.HTTPSConnection(
                 parsed_url.netloc,
-                timeout=UPSTREAM_CONNECT_TIMEOUT,
+                timeout=(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT),
             )
             conn.connect()
             conn.putrequest("GET", parsed_url.path, skip_host=True)
@@ -474,10 +514,7 @@ def download_via_mcp_direct(
 def base64_a85_decode_stream(data: str):
     import base64
 
-    try:
-        yield base64.b64decode(data)
-    except Exception:
-        yield data.encode("utf-8")
+    yield base64.b64decode(data)
 
 
 def generate_multipart(
@@ -496,6 +533,110 @@ def generate_multipart(
         for chunk in stream:
             yield chunk
     yield f"\r\n--{boundary}--\r\n".encode()
+
+
+def get_attachment_upload_config(mcptype: str) -> Optional[Dict[str, Any]]:
+    config = MCP_ENV_MAP.get(mcptype)
+    if not config:
+        return None
+    if isinstance(config, list):
+        return None
+    return config.get("attachment_upload")
+
+
+def build_upload_headers(
+    headers_template: Dict[str, str],
+    token: Optional[str],
+    extra_secrets: Dict[str, str],
+    args: Dict[str, Any],
+) -> Dict[str, str]:
+    import base64
+
+    headers = {}
+    for key, template in headers_template.items():
+        value = substitute_template(
+            template, {**args, "token": token or "", **extra_secrets}
+        )
+        if "{basic_auth}" in value:
+            email = extra_secrets.get("email", "") or extra_secrets.get(
+                "JIRA_EMAIL", ""
+            )
+            auth_string = f"{email}:{token}"
+            value = value.replace(
+                "{basic_auth}", base64.b64encode(auth_string.encode()).decode()
+            )
+        headers[key] = value
+    return headers
+
+
+def upload_via_rest(
+    config: Dict[str, Any],
+    args: Dict[str, Any],
+    file_stream,
+    filename: str,
+    content_type: str,
+    token: Optional[str],
+    extra_secrets: Dict[str, str],
+) -> Dict[str, Any]:
+    method = config.get("method", "POST").upper()
+    url_template = config.get("url_template", "")
+    headers_template = config.get("headers", {})
+
+    url = substitute_template(
+        url_template, {**args, "token": token or "", **extra_secrets}
+    )
+    headers = build_upload_headers(headers_template, token, extra_secrets, args)
+
+    parsed_url = urllib.parse.urlparse(url)
+    conn = http.client.HTTPSConnection(
+        parsed_url.netloc,
+        timeout=(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT),
+    )
+    conn.connect()
+    conn.putrequest(method, parsed_url.path, skip_host=True)
+    if parsed_url.query:
+        conn.putheader("X-Original-URI", f"{parsed_url.path}?{parsed_url.query}")
+    for k, v in headers.items():
+        conn.putheader(k, v)
+
+    boundary = "----McporterUploadBoundary"
+    header = f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\nContent-Type: {content_type}\r\n\r\n'.encode()
+    footer = f"\r\n--{boundary}--\r\n".encode()
+
+    file_size = 0
+    temp_buffer = []
+    while True:
+        chunk = file_stream.read(65536)
+        if not chunk:
+            break
+        temp_buffer.append(chunk)
+        file_size += len(chunk)
+
+    body_size = len(header) + file_size + len(footer)
+    conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+    conn.putheader("Content-Length", str(body_size))
+    conn.endheaders()
+
+    conn.send(header)
+    for chunk in temp_buffer:
+        conn.send(chunk)
+    conn.send(footer)
+
+    response = conn.getresponse()
+    response_body = response.read().decode("utf-8", errors="replace")
+    conn.close()
+
+    if response.status >= 400:
+        raise Exception(
+            f"Upload failed: {response.status} {response.reason}: {response_body[:500]}"
+        )
+
+    try:
+        result = json.loads(response_body)
+    except json.JSONDecodeError:
+        result = {"raw_response": response_body}
+
+    return result
 
 
 class MCPorterProxyHandler(BaseHTTPRequestHandler):
@@ -548,6 +689,8 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self._handle_call()
         elif self.path == "/download-attachment":
             self._handle_download_attachment()
+        elif self.path == "/upload-attachment":
+            self._handle_upload_attachment()
         else:
             self.send_error(404, "Endpoint not found")
 
@@ -748,6 +891,146 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"Download failed: {e}")
             self.send_error(502, f"Download failed: {str(e)}")
+
+    def _handle_upload_attachment(self):
+        auth_key = self.headers.get("X-MCP-Auth-Key")
+        if not auth_key:
+            logger.warning("Upload request without auth key")
+            self.send_error(401, "Authentication required")
+            return
+
+        auth_parts = parse_auth_key(auth_key)
+        if not auth_parts:
+            self.send_error(401, "Invalid auth key format")
+            return
+
+        agent_id, agent_key = auth_parts
+
+        content_type_header = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type_header:
+            self.send_error(400, "Content-Type must be multipart/form-data")
+            return
+
+        boundary = self._parse_boundary(content_type_header)
+        if not boundary:
+            self.send_error(400, "Missing boundary in Content-Type")
+            return
+
+        mcptype = self.headers.get("X-Target-Platform")
+        if not mcptype:
+            self.send_error(400, "Missing X-Target-Platform header")
+            return
+
+        target_args_raw = self.headers.get("X-Target-Args", "{}")
+        try:
+            args = json.loads(target_args_raw)
+        except json.JSONDecodeError as e:
+            self.send_error(400, f"Invalid JSON in X-Target-Args: {e}")
+            return
+
+        if not isinstance(args, dict):
+            self.send_error(400, "X-Target-Args must be a JSON object")
+            return
+
+        config = get_attachment_upload_config(mcptype)
+        if not config:
+            self.send_error(400, f"No attachment upload configured for {mcptype}")
+            return
+
+        upload_type = config.get("type")
+        if not upload_type:
+            self.send_error(400, "Missing 'type' in attachment_upload config")
+            return
+
+        token = resolve_token(mcptype, agent_id, agent_key)
+        extra_secrets = resolve_extra_secrets(mcptype, agent_id, agent_key)
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length == 0:
+            self.send_error(400, "Empty body")
+            return
+
+        if content_length > MAX_UPLOAD_SIZE:
+            self.send_error(
+                413, f"Upload size {content_length} exceeds limit {MAX_UPLOAD_SIZE}"
+            )
+            return
+
+        body = self.rfile.read(content_length)
+
+        filename = args.get("name") or args.get("filename", "upload")
+        content_type = args.get("content_type") or "application/octet-stream"
+
+        file_stream = self._extract_file_from_multipart(body, boundary)
+        if not file_stream:
+            self.send_error(400, "No file part in multipart request")
+            return
+
+        try:
+            if upload_type == "rest_api":
+                result = upload_via_rest(
+                    config,
+                    args,
+                    file_stream,
+                    filename,
+                    content_type,
+                    token,
+                    extra_secrets,
+                )
+            else:
+                self.send_error(400, f"Unknown attachment upload type: {upload_type}")
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "success": True,
+                        "id": result.get("id", result.get("attach", {}).get("id", "")),
+                        "url": result.get("url", result.get("download_url", "")),
+                        "filename": filename,
+                    }
+                ).encode("utf-8")
+            )
+
+        except Exception as e:
+            logger.error(f"Upload failed: {e}")
+            self.send_error(502, f"Upload failed: {str(e)}")
+
+    def _parse_boundary(self, content_type: str) -> Optional[bytes]:
+        if "boundary=" in content_type:
+            boundary_start = content_type.find("boundary=") + len("boundary=")
+            boundary_end = content_type.find(";", boundary_start)
+            if boundary_end == -1:
+                boundary_end = len(content_type)
+            boundary_value = (
+                content_type[boundary_start:boundary_end].strip().strip('"')
+            )
+            return boundary_value.encode()
+        return None
+
+    def _extract_file_from_multipart(
+        self, body: bytes, boundary: bytes
+    ) -> Optional[io.BytesIO]:
+        from email.parser import BytesParser
+        from email.message import Message
+
+        parser = BytesParser()
+        msg = parser.parsebytes(
+            b"Content-Type: multipart/form-data; boundary="
+            + boundary
+            + b"\r\n\r\n"
+            + body
+        )
+
+        for part in msg.walk():
+            if part.get_content_disposition() == "form-data" and part.get_filename():
+                payload = part.get_payload(decode=True)
+                if payload:
+                    return io.BytesIO(payload)
+        return None
 
     def log_message(self, format, *args):
         pass
