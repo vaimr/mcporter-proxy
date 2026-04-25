@@ -33,15 +33,95 @@ MCPorter is a CLI tool for calling MCP (Model Context Protocol) tools. The proxy
 
 ### Configuration File: `mcp_env_map.json`
 
-Located next to `server.py`, this file maps MCP prefixes to environment variable names. Values must be arrays:
+Located next to `server.py`, this file maps MCP prefixes to environment variable names and attachment download configuration.
+
+### Minimal Config (Get Started)
+
+Just list the environment variables your MCP type needs:
 
 ```json
 {
   "github": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
   "gitlab": ["GITLAB_TOKEN"],
-  "confluence": ["CONFLUENCE_TOKEN", "CONFLUENCE_TOKEN_1", "CONFLUENCE_TOKEN_2"]
+  "jira": ["JIRA_API_TOKEN", "JIRA_API_TOKEN_1"]
 }
 ```
+
+### Full Config (with Attachment Download)
+
+```json
+{
+  "github": {
+    "env": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://api.github.com/repos/{owner}/{repo}/releases/assets/{asset_id}",
+      "headers": {
+        "Accept": "application/octet-stream",
+        "Authorization": "Bearer {token}"
+      }
+    }
+  },
+  "confluence": {
+    "env": ["CONFLUENCE_API_TOKEN"],
+    "attachment_download": {
+      "type": "mcp_tool_redirect",
+      "tool_name": "atlassian.confluence_download_attachment",
+      "tool_args_mapping": {
+        "page_id": "{page_id}",
+        "filename": "{filename}"
+      },
+      "download_url_field": "download_url",
+      "headers": { "Authorization": "Bearer {token}" }
+    }
+  }
+}
+```
+
+### Configuration Reference
+
+**mcptype object (minimal):**
+```json
+{ "mcptype": ["ENV_VAR"] }
+```
+
+**mcptype object (full):**
+```json
+{
+  "mcptype": {
+    "env": ["ENV_VAR1", "ENV_VAR2"],
+    "attachment_download": { ... }
+  }
+}
+```
+
+**Fields:**
+
+| Field | Type | Required | Description |
+|:------|:-----|:---------|:------------|
+| `env` | array | Yes | Environment variable names for this mcptype |
+| `attachment_download` | object | No | File download configuration |
+
+**`attachment_download` fields:**
+
+| Field | Type | Required | Default | Description |
+|:------|:-----|:---------|:--------|:------------|
+| `type` | string | Yes | - | `rest_api`, `mcp_tool_redirect`, or `mcp_tool` |
+| `url_template` | string | For rest_api | - | URL with `{placeholder}` placeholders |
+| `method` | string | No | `GET` | HTTP method: GET, POST, PUT, PATCH |
+| `headers` | object | No | `{}` | Template values with `{token}`, `{email}`, `{arg_name}` |
+| `body_template` | string | No | - | JSON body for POST/PUT with placeholders |
+| `tool_name` | string | For mcp_tool types | - | MCP tool name |
+| `tool_args_mapping` | object | For mcp_tool types | `{}` | Maps tool args to request args |
+| `download_url_field` | string | No | - | Response field with download URL (mcp_tool_redirect, mcp_tool) |
+| `max_base64_size` | number | No | `5242880` (5MB) | Max base64 content size for `mcp_tool` type |
+| `tool_timeout` | number | No | `60` | MCP tool execution timeout in seconds |
+
+**Download types:**
+- `rest_api` - Direct HTTP request to platform API
+- `mcp_tool_redirect` - MCP tool returns download URL, proxy streams it
+- `mcp_tool` - MCP tool returns file content directly (base64), OR download URL if `download_url_field` configured
 
 When a token is retrieved from gloves, it's injected as the environment variable specified for that `mcptype`. If multiple env vars are specified (array), server generates multiple `--env` flags with keys: `prefix/agentId/mcptype/agentKey` (index 0) and `prefix/agentId/mcptype/agentKey/1`, `prefix/agentId/mcptype/agentKey/2` (indices 1, 2, ...).
 
@@ -62,6 +142,15 @@ HTTP server that receives tool call requests, runs commands via `gloves run`, an
 | `MCPROXY_SECRETS_PREFIX` | `agents` | Prefix for secrets keys |
 | `MCPROXY_SECRETS_SEPARATOR` | _(auto)_ | Separator for secrets keys; if empty, uses separator from auth key (`-` or `/`) |
 
+**Endpoint:** `GET /health`
+
+Health check for load balancers and orchestration systems.
+
+Response:
+```json
+{ "status": "ok" }
+```
+
 **Endpoint:** `POST /call`
 
 Request body:
@@ -81,6 +170,27 @@ Response:
 }
 ```
 
+**Endpoint:** `POST /download-attachment`
+
+Downloads file attachments from platforms without exposing tokens to the agent.
+
+Request body:
+```json
+{
+  "mcptype": "github",
+  "args": {
+    "owner": "user",
+    "repo": "repo",
+    "asset_id": "123456",
+    "filename": "release.zip"
+  }
+}
+```
+
+Response: `multipart/form-data` streaming the file content.
+
+**Authentication:** Both endpoints use `X-MCP-Auth-Key` header with format `<agentId>-<agentKey>` or `<agentId>/<agentKey>`.
+
 ### Client (Node.js)
 
 Drop-in CLI replacement for `mcporter`. Requires `MCPORTER_PROXY_AUTH_KEY` environment variable.
@@ -89,7 +199,7 @@ Drop-in CLI replacement for `mcporter`. Requires `MCPORTER_PROXY_AUTH_KEY` envir
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `MCPORTER_PROXY_URL` | `http://host.docker.internal:9022/call` | Proxy URL |
+| `MCPORTER_PROXY_URL` | `http://host.docker.internal:9022` | Proxy base URL |
 | `MCPORTER_PROXY_TIMEOUT` | `120000` | Request timeout in milliseconds |
 | `MCPORTER_PROXY_RETRIES` | `2` | Number of retry attempts |
 | `MCPORTER_PROXY_RETRY_DELAY` | `1000` | Delay between retries in milliseconds |
@@ -99,7 +209,15 @@ Drop-in CLI replacement for `mcporter`. Requires `MCPORTER_PROXY_AUTH_KEY` envir
 **Usage:**
 ```bash
 export MCPORTER_PROXY_AUTH_KEY=borets-abc123
+
+# Execute MCP tool
 mcporter-proxy call github.list_repos visibility=private
+
+# Download attachment
+mcporter-proxy download github owner=octocat repo=hello-world asset_id=123 --output release.zip
+
+# Show help
+mcporter-proxy help
 ```
 
 ## Docker Compose Integration
@@ -163,10 +281,33 @@ The agent will use: `MCPORTER_PROXY_AUTH_KEY=borets-${AGENT_KEY}` or `MCPORTER_P
 # Example: adding Confluence and Jira
 cat > server/mcp_env_map.json << 'EOF'
 {
-  "github": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
-  "gitlab": ["GITLAB_TOKEN"],
-  "confluence": ["CONFLUENCE_API_TOKEN"],
-  "jira": ["JIRA_API_TOKEN", "JIRA_API_TOKEN_1"]
+  "github": {
+    "env": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://api.github.com/repos/{owner}/{repo}/releases/assets/{asset_id}",
+      "headers": { "Authorization": "Bearer {token}" }
+    }
+  },
+  "gitlab": {
+    "env": ["GITLAB_TOKEN"],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://gitlab.com/api/v4/projects/{project_id}/repository/files/{file_path}/raw",
+      "headers": { "PRIVATE-TOKEN": "{token}" }
+    }
+  },
+  "confluence": {
+    "env": ["CONFLUENCE_API_TOKEN"],
+    "attachment_download": {
+      "type": "mcp_tool_redirect",
+      "tool_name": "atlassian.confluence_download_attachment",
+      "tool_args_mapping": { "page_id": "{page_id}", "filename": "{filename}" },
+      "download_url_field": "download_url"
+    }
+  }
 }
 EOF
 ```

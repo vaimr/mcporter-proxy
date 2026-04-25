@@ -1,0 +1,132 @@
+name: mcporter-proxy
+description: |
+  MCP proxy server that provides secure tool execution and file attachment downloads.
+  Tokens are never exposed to agents - they're retrieved from gloves secrets manager.
+endpoints:
+  - path: /call
+    method: POST
+    description: Execute MCP tool with environment variables injected from secrets
+    request:
+      type: object
+      properties:
+        tool:
+          type: string
+          description: Full tool name (e.g., "github.list_repos")
+        args:
+          type: object
+          description: Tool arguments
+      required:
+        - tool
+    response:
+      type: object
+      properties:
+        stdout:
+          type: string
+          description: Tool stdout output
+        stderr:
+          type: string
+          description: Tool stderr output
+        returncode:
+          type: integer
+          description: Exit code (0 = success)
+      example:
+        stdout: '{"repos": ["repo1", "repo2"]}'
+        stderr: ''
+        returncode: 0
+    errors:
+      400: Bad request - invalid tool or arguments
+      403: Tool not in allowed list
+      500: Tool execution failed
+
+  - path: /download-attachment
+    method: POST
+    description: Download file attachment, streaming as multipart response
+    request:
+      type: object
+      properties:
+        mcptype:
+          type: string
+          description: MCP type (e.g., "github", "gitlab", "jira", "confluence")
+        args:
+          type: object
+          description: Platform-specific arguments (owner, repo, asset_id, etc.)
+      required:
+        - mcptype
+        - args
+      example:
+        mcptype: github
+        args:
+          owner: octocat
+          repo: hello-world
+          asset_id: "123456"
+          filename: release.zip
+    response:
+      type: multipart/form-data
+      description: File streamed with multipart wrapper
+      headers:
+        Content-Type: multipart/form-data; boundary=simpleboundary
+    errors:
+      400: Unknown mcptype or missing arguments
+      502: Download failed (upstream error)
+
+authentication:
+  header: X-MCP-Auth-Key
+  format: '"<agentId>-<agentKey>" or "<agentId>/<agentKey>"'
+  description: Auth key is parsed to retrieve secrets from gloves
+
+examples:
+  - description: Health check
+    request:
+      method: GET
+      path: /health
+    response:
+      status: ok
+
+  - description: Execute tool with auth
+    request:
+      headers:
+        Content-Type: application/json
+        X-MCP-Auth-Key: myagent-mykey
+      body:
+        tool: github.list_repos
+        args:
+          visibility: private
+    response:
+      stdout: '["my-private-repo"]'
+      stderr: ''
+      returncode: 0
+
+  - description: Download GitHub release asset
+    request:
+      headers:
+        Content-Type: application/json
+        X-MCP-Auth-Key: myagent-mykey
+      body:
+        mcptype: github
+        args:
+          owner: octocat
+          repo: hello-world
+          asset_id: "123456"
+          filename: release.zip
+    response:
+      description: Multipart response containing file binary
+
+  - description: Download Confluence attachment (via MCP tool redirect)
+    request:
+      headers:
+        Content-Type: application/json
+        X-MCP-Auth-Key: myagent-mykey
+      body:
+        mcptype: confluence
+        args:
+          page_id: "123456"
+          filename: document.pdf
+    response:
+      description: Multipart response containing file binary
+
+cli_usage:
+  tool_call: mcporter-proxy call <tool> [args]
+  download: mcporter-proxy download <platform> [args] [--output <path>]
+  examples:
+    - mcporter-proxy call github.list_repos visibility=private
+    - mcporter-proxy download github owner=octocat repo=hello-world asset_id=123 --output release.zip
