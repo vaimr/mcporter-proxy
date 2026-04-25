@@ -664,7 +664,7 @@ class TestConfigValidation(unittest.TestCase):
 
         config = {"attachment_download": {"type": "invalid_type"}}
         errors = validate_config(config, "test_mcptype")
-        self.assertTrue(any("Invalid type" in e for e in errors))
+        self.assertTrue(any("download type" in e.lower() for e in errors))
 
     def test_rest_api_missing_url_template(self):
         from server.server import validate_config

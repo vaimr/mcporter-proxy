@@ -115,18 +115,6 @@ def parse_auth_key(auth_key: str) -> Optional[Tuple[str, str]]:
         f"Invalid auth key format: expected <agentId>-<agentKey> or <agentId>/<agentKey>, got: {auth_key}"
     )
     return None
-    if "-" in auth_key:
-        parts = auth_key.split("-", 1)
-        if len(parts) == 2 and parts[0] and parts[1]:
-            return (parts[0], parts[1])
-    if "/" in auth_key:
-        parts = auth_key.split("/", 1)
-        if len(parts) == 2 and parts[0] and parts[1]:
-            return (parts[0], parts[1])
-    logger.warning(
-        f"Invalid auth key format: expected <agentId>-<agentKey> or <agentId>/<agentKey>, got: {auth_key}"
-    )
-    return None
 
 
 def get_mcptype(tool: str) -> str:
