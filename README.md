@@ -11,12 +11,12 @@ MCPorter is a CLI tool for calling MCP (Model Context Protocol) tools. The proxy
 │   Agent     │ ───────────►  │  mcporter   │ ─────────────────►│ mcporter│
 │  (sandbox)  │   POST /call  │   -proxy    │   --env VAR=...    │   CLI   │
 └─────────────┘               └─────────────┘                   └──────────┘
-                                  │
-                                  ▼
-                           ┌─────────────┐
-                           │   gloves    │
-                           │  (secrets)  │
-                           └─────────────┘
+                                      │
+                                      ▼
+                               ┌─────────────┐
+                               │   gloves    │
+                               │  (secrets)  │
+                               └─────────────┘
 ```
 
 ## Architecture
@@ -52,6 +52,7 @@ When a token is retrieved from gloves, it's injected as the environment variable
 HTTP server that receives tool call requests, runs commands via `gloves run`, and executes `mcporter` commands.
 
 **Environment variables:**
+
 | Variable | Default | Description |
 |:---------|:--------|:------------|
 | `MCPORTER_PROXY_PORT` | `8080` | Listening port |
@@ -85,6 +86,7 @@ Response:
 Drop-in CLI replacement for `mcporter`. Requires `MCPORTER_PROXY_AUTH_KEY` environment variable.
 
 **Environment variables:**
+
 | Variable | Default | Description |
 |:---------|:--------|:------------|
 | `MCPORTER_PROXY_URL` | `http://host.docker.internal:9022/call` | Proxy URL |
