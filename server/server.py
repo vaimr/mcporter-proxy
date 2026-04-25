@@ -644,15 +644,18 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             cls._allowed_patterns = [
                 p.strip() for p in patterns.split(",") if p.strip()
             ]
-        cls._allowed_regexes = [
-            re.compile(re.escape(p).replace(r"\*", ".*")) for p in cls._allowed_patterns
+        regexes: List[re.Pattern] = [
+            re.compile(re.escape(p).replace(r"\*", ".*"))
+            for p in cls._allowed_patterns or []
         ]
+        cls._allowed_regexes = regexes
         return cls._allowed_patterns
 
     def _is_tool_allowed(self, tool: str) -> bool:
         if self._allowed_regexes is None:
             self._load_allowed_patterns()
-        for regex in self._allowed_regexes:
+        regexes: List[re.Pattern] = self._allowed_regexes or []
+        for regex in regexes:
             if regex.fullmatch(tool):
                 return True
         return False
