@@ -10,6 +10,7 @@ Configuration via environment variables:
   - MCPROXY_SECRETS_SEPARATOR: separator for secrets keys (default "")
 """
 
+import base64
 import http.client
 import io
 import json
@@ -21,7 +22,7 @@ import urllib.parse
 import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 LOG_LEVEL = os.environ.get("MCPORTER_PROXY_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -31,17 +32,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcporter-proxy")
 
+
+class MCPToolError(Exception):
+    """Raised when MCP tool execution fails or returns invalid response."""
+
+
 SCRIPT_DIR = Path(__file__).parent
 ENV_MAP_PATH = SCRIPT_DIR / "mcp_env_map.json"
 
 UPSTREAM_CONNECT_TIMEOUT = 10
 UPSTREAM_READ_TIMEOUT = 300
+UPSTREAM_TIMEOUT = max(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT)
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024
 BOUNDARY_BYTES = b"simpleboundary"
 MULTIPART_BOUNDARY = "simpleboundary"
 
 
 def validate_config(config: Dict[str, Any], mcptype: str) -> List[str]:
+    """Validate attachment_download and attachment_upload config for a mcptype."""
     errors = []
     if isinstance(config, list):
         return errors
@@ -77,7 +85,7 @@ def validate_config(config: Dict[str, Any], mcptype: str) -> List[str]:
 
 def load_env_map() -> Dict[str, Any]:
     try:
-        with open(ENV_MAP_PATH) as f:
+        with open(ENV_MAP_PATH, encoding="utf-8") as f:
             config = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -89,14 +97,14 @@ def load_env_map() -> Dict[str, Any]:
 
     if all_errors:
         for err in all_errors:
-            logger.error(f"Config validation: {err}")
+            logger.error("Config validation: %s", err)
         raise ValueError(f"Invalid config: {'; '.join(all_errors)}")
 
     return config
 
 
 MCP_ENV_MAP = load_env_map()
-logger.info(f"Loaded MCP env map: {MCP_ENV_MAP}")
+logger.info("Loaded MCP env map: %s", MCP_ENV_MAP)
 
 
 def parse_auth_key(auth_key: str) -> Optional[Tuple[str, str]]:
@@ -112,7 +120,8 @@ def parse_auth_key(auth_key: str) -> Optional[Tuple[str, str]]:
         if len(parts) == 2 and parts[0] and parts[1]:
             return (parts[0], parts[1])
     logger.warning(
-        f"Invalid auth key format: expected <agentId>-<agentKey> or <agentId>/<agentKey>, got: {auth_key}"
+        "Invalid auth key format: expected <agentId>-<agentKey> or <agentId>/<agentKey>, got: %s",
+        auth_key,
     )
     return None
 
@@ -184,7 +193,6 @@ def resolve_token(mcptype: str, agent_id: str, agent_key: str) -> Optional[str]:
     keys = get_secrets_keys(mcptype, agent_id, agent_key)
     if not keys:
         return None
-    sep = SECRETS_SEPARATOR if SECRETS_SEPARATOR else "/"
     secrets_key = keys[0][1]
     try:
         result = subprocess.run(
@@ -192,11 +200,12 @@ def resolve_token(mcptype: str, agent_id: str, agent_key: str) -> Optional[str]:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except Exception as e:
-        logger.error(f"Failed to resolve token: {e}")
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        logger.error("Failed to resolve token: %s", e)
     return None
 
 
@@ -204,7 +213,6 @@ def resolve_extra_secrets(
     mcptype: str, agent_id: str, agent_key: str
 ) -> Dict[str, str]:
     keys = get_secrets_keys(mcptype, agent_id, agent_key)
-    sep = SECRETS_SEPARATOR if SECRETS_SEPARATOR else "/"
     secrets = {}
     for i, key in keys:
         if i == 0:
@@ -215,12 +223,13 @@ def resolve_extra_secrets(
                 capture_output=True,
                 text=True,
                 timeout=10,
+                check=False,
             )
             if result.returncode == 0:
                 env_vars = get_env_vars_for_mcptype(mcptype)
                 if i < len(env_vars):
                     secrets[env_vars[i]] = result.stdout.strip()
-        except Exception:
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             pass
     return secrets
 
@@ -231,8 +240,6 @@ def build_headers(
     extra_secrets: Dict[str, str],
     args: Dict[str, Any],
 ) -> Dict[str, str]:
-    import base64
-
     headers = {}
     for key, value in headers_template.items():
         result = value
@@ -280,7 +287,7 @@ def download_via_rest(
     parsed_url = urllib.parse.urlparse(url)
     conn = http.client.HTTPSConnection(
         parsed_url.netloc,
-        timeout=(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT),
+        timeout=UPSTREAM_TIMEOUT,
     )
     conn.connect()
     conn.putrequest(method, parsed_url.path, skip_host=True)
@@ -320,8 +327,6 @@ def download_via_mcp_redirect(
     token: Optional[str],
     extra_secrets: Dict[str, str],
 ) -> Tuple[io.BytesIO, str, str]:
-    import io
-
     tool_name = config.get("tool_name", "")
     tool_args_mapping = config.get("tool_args_mapping", {})
     download_url_field = config.get("download_url_field", "download_url")
@@ -364,10 +369,12 @@ def download_via_mcp_redirect(
                 env_flags.extend(["--env", f"{env_var}=gloves://{secrets_key}"])
             exec_cmd = ["gloves", "--agent", agent_id, "run", *env_flags, "--", *cmd]
 
-    result = subprocess.run(exec_cmd, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(
+        exec_cmd, capture_output=True, text=True, timeout=60, check=False
+    )
 
     if result.returncode != 0:
-        raise Exception(f"MCP tool failed: {result.stderr}")
+        raise MCPToolError(f"MCP tool failed: {result.stderr}")
 
     tool_response = json.loads(result.stdout)
     download_url = tool_response.get(download_url_field) or tool_response.get(
@@ -375,14 +382,14 @@ def download_via_mcp_redirect(
     )
 
     if not download_url or not isinstance(download_url, str):
-        raise Exception(f"No download_url in MCP tool response")
+        raise MCPToolError(f"No download_url in MCP tool response")
 
     parsed_url = urllib.parse.urlparse(download_url)
     headers = build_headers(headers_template, token, extra_secrets, args)
 
     conn = http.client.HTTPSConnection(
         parsed_url.netloc,
-        timeout=(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT),
+        timeout=UPSTREAM_TIMEOUT,
     )
     conn.connect()
     conn.putrequest("GET", parsed_url.path, skip_host=True)
@@ -430,10 +437,12 @@ def download_via_mcp_direct(
             value = json.dumps(value)
         cmd.append(f"{key}={value}")
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=tool_timeout)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=tool_timeout, check=False
+    )
 
     if result.returncode != 0:
-        raise Exception(f"MCP tool failed: {result.stderr}")
+        raise MCPToolError(f"MCP tool failed: {result.stderr}")
 
     tool_response = json.loads(result.stdout)
 
@@ -450,7 +459,7 @@ def download_via_mcp_direct(
 
             conn = http.client.HTTPSConnection(
                 parsed_url.netloc,
-                timeout=(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT),
+                timeout=UPSTREAM_TIMEOUT,
             )
             conn.connect()
             conn.putrequest("GET", parsed_url.path, skip_host=True)
@@ -478,18 +487,16 @@ def download_via_mcp_direct(
     )
 
     if not file_content:
-        raise Exception("No file_content in MCP tool response")
+        raise MCPToolError("No file_content in MCP tool response")
 
     is_base64 = tool_response.get("base64", False)
     filename = args.get("filename", "download")
     content_type = args.get("content_type", "application/octet-stream")
 
     if is_base64:
-        import base64
-
         max_base64_size = config.get("max_base64_size", 5 * 1024 * 1024)
         if len(file_content) > max_base64_size:
-            raise Exception(
+            raise MCPToolError(
                 f"Base64 content size {len(file_content)} exceeds limit {max_base64_size}"
             )
         gen = base64_a85_decode_stream(file_content)
@@ -500,8 +507,6 @@ def download_via_mcp_direct(
 
 
 def base64_a85_decode_stream(data: str):
-    import base64
-
     yield base64.b64decode(data)
 
 
@@ -518,8 +523,7 @@ def generate_multipart(
                 break
             yield chunk
     else:
-        for chunk in stream:
-            yield chunk
+        yield from stream
     yield f"\r\n--{boundary}--\r\n".encode()
 
 
@@ -538,8 +542,6 @@ def build_upload_headers(
     extra_secrets: Dict[str, str],
     args: Dict[str, Any],
 ) -> Dict[str, str]:
-    import base64
-
     headers = {}
     for key, template in headers_template.items():
         value = substitute_template(
@@ -578,7 +580,7 @@ def upload_via_rest(
     parsed_url = urllib.parse.urlparse(url)
     conn = http.client.HTTPSConnection(
         parsed_url.netloc,
-        timeout=(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT),
+        timeout=UPSTREAM_TIMEOUT,
     )
     conn.connect()
     conn.putrequest(method, parsed_url.path, skip_host=True)
@@ -615,7 +617,7 @@ def upload_via_rest(
     conn.close()
 
     if response.status >= 400:
-        raise Exception(
+        raise MCPToolError(
             f"Upload failed: {response.status} {response.reason}: {response_body[:500]}"
         )
 
@@ -696,7 +698,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         try:
             data = json.loads(body)
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received: {e}")
+            logger.warning("Invalid JSON received: %s", e)
             self.send_error(400, f"Invalid JSON: {e}")
             return
 
@@ -708,21 +710,23 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
 
         auth_key = self.headers.get("X-MCP-Auth-Key")
         logger.info(
-            f"Incoming request: tool={tool} auth_key={'present' if auth_key else 'absent'}"
+            "Incoming request: tool=%s auth_key=%s",
+            tool,
+            "present" if auth_key else "absent",
         )
 
         if not self._is_tool_allowed(tool):
-            logger.warning(f"Tool blocked: {tool}")
+            logger.warning("Tool blocked: %s", tool)
             self.send_error(403, f"Tool '{tool}' is not allowed")
             return
 
         args = data.get("args", {})
         if not isinstance(args, dict):
-            logger.warning(f"Invalid 'args' type: {type(args).__name__}")
+            logger.warning("Invalid 'args' type: %s", type(args).__name__)
             self.send_error(400, "'args' must be a dictionary")
             return
 
-        logger.debug(f"Tool args: {args}")
+        logger.debug("Tool args: %s", args)
 
         cmd = ["mcporter", "call", tool]
         for key, value in args.items():
@@ -730,7 +734,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 value = json.dumps(value)
             cmd.append(f"{key}={value}")
 
-        logger.debug(f"Executing: {' '.join(cmd)}")
+        logger.debug("Executing: %s", " ".join(cmd))
 
         exec_cmd = cmd
         if auth_key:
@@ -753,7 +757,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                     else:
                         secrets_key = f"{SECRETS_PREFIX}{sep}{agent_id}{sep}{mcptype}{sep}{agent_key}{sep}{i}"
                     env_flags.extend(["--env", f"{env_var}=gloves://{secrets_key}"])
-                    logger.debug(f"gloves env: {env_var}=gloves://{secrets_key}")
+                    logger.debug("gloves env: %s=gloves://%s", env_var, secrets_key)
                 exec_cmd = [
                     "gloves",
                     "--agent",
@@ -764,7 +768,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                     *cmd,
                 ]
             else:
-                logger.warning(f"Invalid auth key format: {auth_key}")
+                logger.warning("Invalid auth key format: %s", auth_key)
 
         try:
             result = subprocess.run(
@@ -772,9 +776,10 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                check=False,
             )
         except subprocess.TimeoutExpired:
-            logger.error(f"Command timed out after {self.timeout}s: {tool}")
+            logger.error("Command timed out after %ss: %s", self.timeout, tool)
             self.send_error(504, f"Command timed out after {self.timeout}s")
             return
         except FileNotFoundError as e:
@@ -785,10 +790,10 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_error(500, "Required executable not found")
             return
 
-        logger.info(f"Command completed: {tool} (exit={result.returncode})")
+        logger.info("Command completed: %s (exit=%s)", tool, result.returncode)
 
         if result.stderr:
-            logger.debug(f"stderr: {result.stderr[:500]}")
+            logger.debug("stderr: %s", result.stderr[:500])
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -879,48 +884,21 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             for chunk in generate_multipart(stream, filename, content_type):
                 self.wfile.write(chunk)
 
-        except Exception as e:
-            logger.error(f"Download failed: {e}")
+        except (ConnectionResetError, BrokenPipeError, OSError, MCPToolError) as e:
+            logger.error("Download failed: %s", e)
             self.send_error(502, f"Download failed: {str(e)}")
 
     def _handle_upload_attachment(self):
-        auth_key = self.headers.get("X-MCP-Auth-Key")
-        if not auth_key:
-            logger.warning("Upload request without auth key")
-            self.send_error(401, "Authentication required")
+        auth_valid, auth_key, agent_id, agent_key = self._validate_upload_auth()
+        if not auth_valid:
             return
 
-        auth_parts = parse_auth_key(auth_key)
-        if not auth_parts:
-            self.send_error(401, "Invalid auth key format")
-            return
-
-        agent_id, agent_key = auth_parts
-
-        content_type_header = self.headers.get("Content-Type", "")
-        if "multipart/form-data" not in content_type_header:
-            self.send_error(400, "Content-Type must be multipart/form-data")
-            return
-
-        boundary = self._parse_boundary(content_type_header)
+        boundary = self._parse_upload_boundary()
         if not boundary:
-            self.send_error(400, "Missing boundary in Content-Type")
             return
 
-        mcptype = self.headers.get("X-Target-Platform")
+        mcptype, args = self._parse_upload_target_args()
         if not mcptype:
-            self.send_error(400, "Missing X-Target-Platform header")
-            return
-
-        target_args_raw = self.headers.get("X-Target-Args", "{}")
-        try:
-            args = json.loads(target_args_raw)
-        except json.JSONDecodeError as e:
-            self.send_error(400, f"Invalid JSON in X-Target-Args: {e}")
-            return
-
-        if not isinstance(args, dict):
-            self.send_error(400, "X-Target-Args must be a JSON object")
             return
 
         config = get_attachment_upload_config(mcptype)
@@ -933,62 +911,128 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Missing 'type' in attachment_upload config")
             return
 
-        token = resolve_token(mcptype, agent_id, agent_key)
-        extra_secrets = resolve_extra_secrets(mcptype, agent_id, agent_key)
+        file_stream = self._extract_upload_file(boundary)
+        if not file_stream:
+            return
 
+        try:
+            result = self._execute_upload(
+                upload_type, config, args, file_stream, agent_id, agent_key
+            )
+            self._send_upload_response(
+                result, args.get("name") or args.get("filename", "upload")
+            )
+        except (ConnectionResetError, BrokenPipeError, OSError, MCPToolError) as e:
+            logger.error("Upload failed: %s", e)
+            self.send_error(502, f"Upload failed: {str(e)}")
+
+    def _validate_upload_auth(self):
+        """Validate auth headers for upload. Returns (valid, auth_key, agent_id, agent_key)."""
+        auth_key = self.headers.get("X-MCP-Auth-Key")
+        if not auth_key:
+            logger.warning("Upload request without auth key")
+            self.send_error(401, "Authentication required")
+            return False, None, None, None
+
+        auth_parts = parse_auth_key(auth_key)
+        if not auth_parts:
+            self.send_error(401, "Invalid auth key format")
+            return False, None, None, None
+
+        return True, auth_key, auth_parts[0], auth_parts[1]
+
+    def _parse_upload_boundary(self):
+        """Parse Content-Type and extract boundary for upload."""
+        content_type_header = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type_header:
+            self.send_error(400, "Content-Type must be multipart/form-data")
+            return None
+
+        boundary = self._parse_boundary(content_type_header)
+        if not boundary:
+            self.send_error(400, "Missing boundary in Content-Type")
+            return None
+
+        return boundary
+
+    def _parse_upload_target_args(self):
+        """Parse X-Target-Platform and X-Target-Args headers. Returns (mcptype, args)."""
+        mcptype = self.headers.get("X-Target-Platform")
+        if not mcptype:
+            self.send_error(400, "Missing X-Target-Platform header")
+            return None, None
+
+        target_args_raw = self.headers.get("X-Target-Args", "{}")
+        try:
+            args = json.loads(target_args_raw)
+        except json.JSONDecodeError as e:
+            self.send_error(400, f"Invalid JSON in X-Target-Args: {e}")
+            return None, None
+
+        if not isinstance(args, dict):
+            self.send_error(400, "X-Target-Args must be a JSON object")
+            return None, None
+
+        return mcptype, args
+
+    def _extract_upload_file(self, boundary):
+        """Extract file from multipart body. Returns file stream or None."""
         content_length = int(self.headers.get("Content-Length", 0))
         if content_length == 0:
             self.send_error(400, "Empty body")
-            return
+            return None
 
         if content_length > MAX_UPLOAD_SIZE:
             self.send_error(
                 413, f"Upload size {content_length} exceeds limit {MAX_UPLOAD_SIZE}"
             )
-            return
+            return None
 
         body = self.rfile.read(content_length)
-
-        filename = args.get("name") or args.get("filename", "upload")
-        content_type = args.get("content_type") or "application/octet-stream"
-
         file_stream = self._extract_file_from_multipart(body, boundary)
         if not file_stream:
             self.send_error(400, "No file part in multipart request")
-            return
+            return None
 
-        try:
-            if upload_type == "rest_api":
-                result = upload_via_rest(
-                    config,
-                    args,
-                    file_stream,
-                    filename,
-                    content_type,
-                    token,
-                    extra_secrets,
-                )
-            else:
-                self.send_error(400, f"Unknown attachment upload type: {upload_type}")
-                return
+        return file_stream
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(
-                json.dumps(
-                    {
-                        "success": True,
-                        "id": result.get("id", result.get("attach", {}).get("id", "")),
-                        "url": result.get("url", result.get("download_url", "")),
-                        "filename": filename,
-                    }
-                ).encode("utf-8")
+    def _execute_upload(
+        self, upload_type, config, args, file_stream, agent_id, agent_key
+    ):
+        """Execute upload based on type. Returns upload result."""
+        token = resolve_token(args.get("mcptype", ""), agent_id, agent_key)
+        extra_secrets = resolve_extra_secrets(
+            args.get("mcptype", ""), agent_id, agent_key
+        )
+
+        if upload_type == "rest_api":
+            return upload_via_rest(
+                config,
+                args,
+                file_stream,
+                args.get("name") or args.get("filename", "upload"),
+                args.get("content_type") or "application/octet-stream",
+                token,
+                extra_secrets,
             )
 
-        except Exception as e:
-            logger.error(f"Upload failed: {e}")
-            self.send_error(502, f"Upload failed: {str(e)}")
+        raise MCPToolError(f"Unknown attachment upload type: {upload_type}")
+
+    def _send_upload_response(self, result, filename):
+        """Send successful upload response."""
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(
+            json.dumps(
+                {
+                    "success": True,
+                    "id": result.get("id", result.get("attach", {}).get("id", "")),
+                    "url": result.get("url", result.get("download_url", "")),
+                    "filename": filename,
+                }
+            ).encode("utf-8")
+        )
 
     def _parse_boundary(self, content_type: str) -> Optional[bytes]:
         if "boundary=" in content_type:
@@ -1006,7 +1050,6 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         self, body: bytes, boundary: bytes
     ) -> Optional[io.BytesIO]:
         from email.parser import BytesParser
-        from email.message import Message
 
         parser = BytesParser()
         msg = parser.parsebytes(
@@ -1033,7 +1076,7 @@ def main():
     port = int(os.environ.get("MCPORTER_PROXY_PORT", "8080"))
     server = HTTPServer(("0.0.0.0", port), MCPorterProxyHandler)
 
-    def shutdown_handler(signum, frame):
+    def shutdown_handler(_signum, _frame):
         logger.info("Received shutdown signal, closing server...")
         server.shutdown()
 
