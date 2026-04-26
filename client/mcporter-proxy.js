@@ -183,7 +183,7 @@ async function proxyRequest(payload, path, options = {}) {
   }
 }
 
-async function parseDownloadArgs(args) {
+function parseDownloadArgs(args) {
   if (args.length < 1) {
     console.error("Usage: mcporter-proxy download <platform> [args] [--output <path>]");
     process.exit(1);
@@ -216,7 +216,7 @@ async function parseDownloadArgs(args) {
   return { mcptype, args: downloadArgs, outputPath };
 }
 
-async function parseUploadArgs(args) {
+function parseUploadArgs(args) {
   if (args.length < 1) {
     console.error("Usage: mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]");
     process.exit(1);
