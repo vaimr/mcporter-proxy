@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import urllib.parse
 import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -67,6 +68,10 @@ BOUNDARY_BYTES = b"simpleboundary"
 MULTIPART_BOUNDARY = "simpleboundary"
 
 
+def get_env_map_path() -> Path:
+    return Path(os.environ.get("MCP_ENV_MAP_PATH", ENV_MAP_PATH))
+
+
 def validate_config(config: Dict[str, Any], mcptype: str) -> List[str]:
     """Validate attachment_download and attachment_upload config for a mcptype."""
     errors = []
@@ -104,7 +109,8 @@ def validate_config(config: Dict[str, Any], mcptype: str) -> List[str]:
 
 def load_env_map() -> Dict[str, Any]:
     try:
-        with open(ENV_MAP_PATH, encoding="utf-8") as f:
+        env_map_path = get_env_map_path()
+        with open(env_map_path, encoding="utf-8") as f:
             config = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -1019,6 +1025,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
 
         # Parse query params
         params: Dict[str, bool] = {}
+        query_string = query_string.lstrip("?")
         if query_string:
             for pair in query_string.split("&"):
                 if "=" in pair:
@@ -1069,35 +1076,58 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
 
         logger.debug("Executing mcporter list: %s", " ".join(exec_cmd))
 
+        tmp_stdout = tempfile.NamedTemporaryFile(delete=False, mode="w+b")
+        tmp_stderr = tempfile.NamedTemporaryFile(delete=False, mode="w+b")
+        tmp_stdout_path = tmp_stdout.name
+        tmp_stderr_path = tmp_stderr.name
+        tmp_stdout.close()
+        tmp_stderr.close()
+
         try:
-            result = subprocess.run(
-                exec_cmd,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-            )
+            with (
+                open(tmp_stdout_path, "wb") as stdout_f,
+                open(tmp_stderr_path, "wb") as stderr_f,
+            ):
+                proc = subprocess.Popen(
+                    exec_cmd,
+                    stdout=stdout_f,
+                    stderr=stderr_f,
+                )
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    self.send_error(504, "mcporter timed out")
+                    return
         except FileNotFoundError as e:
             if e.filename == "gloves":
                 self.send_error(500, "gloves not found")
             else:
                 self.send_error(500, "mcporter not found")
             return
-        except subprocess.TimeoutExpired:
-            self.send_error(504, "mcporter timed out")
-            return
 
-        if result.returncode != 0:
-            logger.warning("mcporter list failed: %s", result.stderr)
-            # Fall through to return output anyway
+        with open(tmp_stdout_path, "rb") as f:
+            stdout_bytes = f.read()
+        with open(tmp_stderr_path, "rb") as f:
+            stderr_bytes = f.read()
+        import os as os_module
+
+        os_module.unlink(tmp_stdout_path)
+        os_module.unlink(tmp_stderr_path)
+
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+
+        returncode = proc.returncode
+
+        if returncode != 0:
+            logger.warning("mcporter list failed: %s", stderr)
 
         if use_json:
             try:
-                data = json.loads(result.stdout)
+                data = json.loads(stdout)
             except json.JSONDecodeError:
-                self.send_error(
-                    500, f"Invalid JSON from mcporter: {result.stderr[:200]}"
-                )
+                self.send_error(500, f"Invalid JSON from mcporter: {stderr[:200]}")
                 return
 
             # Inject attachment tools into each server's tools array
@@ -1112,7 +1142,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
-            self.wfile.write(result.stdout.encode("utf-8"))
+            self.wfile.write(stdout.encode("utf-8"))
 
     def _inject_attachment_tools(self, data: Any) -> None:
         inject_attachment_tools(data)

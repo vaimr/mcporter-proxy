@@ -29,29 +29,32 @@ BACKUP_ENV_MAP_PATH = os.path.join(tempfile.gettempdir(), "mcp_env_map.json.back
 
 class TestEnvMap(unittest.TestCase):
     def setUp(self):
-        with open(ENV_MAP_PATH, "r") as f:
-            self.original_env_map = f.read()
-        with open(TEST_ENV_MAP_PATH, "r") as f:
-            self.test_env_map = f.read()
+        os.environ["MCP_ENV_MAP_PATH"] = TEST_ENV_MAP_PATH
+        import importlib
+        import server.server
+
+        importlib.reload(server.server)
 
     def tearDown(self):
-        with open(ENV_MAP_PATH, "w") as f:
-            f.write(self.original_env_map)
+        if "MCP_ENV_MAP_PATH" in os.environ:
+            del os.environ["MCP_ENV_MAP_PATH"]
         import importlib
         import server.server
 
         importlib.reload(server.server)
 
     def test_env_map_structure(self):
-        self.env_map = json.loads(self.test_env_map)
-        self.assertIn("github", self.env_map)
-        self.assertIn("gitlab", self.env_map)
-        self.assertIn("confluence", self.env_map)
-        self.assertIn("jira", self.env_map)
+        from server.server import MCP_ENV_MAP
+
+        self.assertIn("github", MCP_ENV_MAP)
+        self.assertIn("gitlab", MCP_ENV_MAP)
+        self.assertIn("confluence", MCP_ENV_MAP)
+        self.assertIn("jira", MCP_ENV_MAP)
 
     def test_github_config(self):
-        self.env_map = json.loads(self.test_env_map)
-        github = self.env_map["github"]
+        from server.server import MCP_ENV_MAP
+
+        github = MCP_ENV_MAP["github"]
         self.assertIsInstance(github, dict)
         self.assertIn("env", github)
         self.assertIn("attachment_download", github)
@@ -60,22 +63,25 @@ class TestEnvMap(unittest.TestCase):
         self.assertIn("url_template", github["attachment_download"])
 
     def test_gitlab_config(self):
-        self.env_map = json.loads(self.test_env_map)
-        gitlab = self.env_map["gitlab"]
+        from server.server import MCP_ENV_MAP
+
+        gitlab = MCP_ENV_MAP["gitlab"]
         self.assertIsInstance(gitlab, dict)
         self.assertIn("env", gitlab)
         self.assertIn("attachment_download", gitlab)
 
     def test_confluence_config(self):
-        self.env_map = json.loads(self.test_env_map)
-        confluence = self.env_map["confluence"]
+        from server.server import MCP_ENV_MAP
+
+        confluence = MCP_ENV_MAP["confluence"]
         self.assertIsInstance(confluence, dict)
         self.assertEqual(confluence["attachment_download"]["type"], "mcp_tool_redirect")
         self.assertIn("tool_name", confluence["attachment_download"])
 
     def test_jira_config(self):
-        self.env_map = json.loads(self.test_env_map)
-        jira = self.env_map["jira"]
+        from server.server import MCP_ENV_MAP
+
+        jira = MCP_ENV_MAP["jira"]
         self.assertIsInstance(jira, dict)
         self.assertEqual(jira["attachment_download"]["type"], "rest_api")
 
@@ -119,20 +125,15 @@ class TestTemplateSubstitution(unittest.TestCase):
 
 class TestGetEnvVarsForMcptype(unittest.TestCase):
     def setUp(self):
-        with open(ENV_MAP_PATH, "r") as f:
-            self.original_env_map = f.read()
-        with open(TEST_ENV_MAP_PATH, "r") as f:
-            test_config = f.read()
-        with open(ENV_MAP_PATH, "w") as f:
-            f.write(test_config)
+        os.environ["MCP_ENV_MAP_PATH"] = TEST_ENV_MAP_PATH
         import importlib
         import server.server
 
         importlib.reload(server.server)
 
     def tearDown(self):
-        with open(ENV_MAP_PATH, "w") as f:
-            f.write(self.original_env_map)
+        if "MCP_ENV_MAP_PATH" in os.environ:
+            del os.environ["MCP_ENV_MAP_PATH"]
         import importlib
         import server.server
 
@@ -153,16 +154,15 @@ class TestGetEnvVarsForMcptype(unittest.TestCase):
 
 class TestGetAttachmentDownloadConfig(unittest.TestCase):
     def setUp(self):
-        with open(ENV_MAP_PATH, "r") as f:
-            self.original_env_map = f.read()
+        os.environ["MCP_ENV_MAP_PATH"] = TEST_ENV_MAP_PATH
         import importlib
         import server.server
 
         importlib.reload(server.server)
 
     def tearDown(self):
-        with open(ENV_MAP_PATH, "w") as f:
-            f.write(self.original_env_map)
+        if "MCP_ENV_MAP_PATH" in os.environ:
+            del os.environ["MCP_ENV_MAP_PATH"]
         import importlib
         import server.server
 
@@ -1206,12 +1206,22 @@ if __name__ == "__main__":
         cls.mock_dir = tempfile.mkdtemp()
         cls.mock_mcporter_path = os.path.join(cls.mock_dir, "mcporter")
         with open(cls.mock_mcporter_path, "w") as f:
-            f.write("""#!/bin/bash
+            tools = []
+            for i in range(500):
+                tools.append({"name": f"tool_{i}", "description": "x" * 100})
+            tools_json = json.dumps(tools)
+            github_response = (
+                '{"mode": "server", "name": "github", "status": "ok", "durationMs": 50, "transport": "HTTP http://github:3000/mcp", "source": {"kind": "local"}, "tools": '
+                + tools_json
+                + "}"
+            )
+            list_response = '{"mode": "list", "counts": {"ok": 2, "auth": 0, "offline": 0, "http": 0, "error": 0}, "servers": [{"name": "github", "status": "ok", "durationMs": 50, "transport": "HTTP http://github:3000/mcp", "source": {"kind": "local"}, "tools": [{"name": "list_repos", "description": "List repositories", "inputSchema": {"type": "object"}}]}, {"name": "gitlab", "status": "ok", "durationMs": 40, "transport": "HTTP http://gitlab:3333/mcp", "source": {"kind": "local"}, "tools": []}]}'
+            script = f"""#!/bin/bash
 if [[ "$*" == *"json"* ]]; then
     if [[ "$*" == *"github"* ]]; then
-        echo '{"mode": "server", "name": "github", "status": "ok", "durationMs": 50, "transport": "HTTP http://github:3000/mcp", "source": {"kind": "local"}, "tools": [{"name": "list_repos", "description": "List repositories", "inputSchema": {"type": "object"}}]}'
+        echo '{github_response}'
     else
-        echo '{"mode": "list", "counts": {"ok": 2, "auth": 0, "offline": 0, "http": 0, "error": 0}, "servers": [{"name": "github", "status": "ok", "durationMs": 50, "transport": "HTTP http://github:3000/mcp", "source": {"kind": "local"}, "tools": [{"name": "list_repos", "description": "List repos", "inputSchema": {"type": "object"}}]}, {"name": "gitlab", "status": "ok", "durationMs": 40, "transport": "HTTP http://gitlab:3333/mcp", "source": {"kind": "local"}, "tools": []}]}'
+        echo '{list_response}'
     fi
 else
     echo "mcporter 0.9.0 — Listing 2 server(s)"
@@ -1220,7 +1230,8 @@ else
     echo "✔ Listed 2 servers (2 healthy; 0 errors)."
 fi
 exit 0
-""")
+"""
+            f.write(script)
         os.chmod(cls.mock_mcporter_path, 0o755)
 
         cls.mock_gloves_path = os.path.join(cls.mock_dir, "gloves")
@@ -1328,3 +1339,25 @@ exit 0
         body = json.loads(resp.read().decode())
         self.assertEqual(body.get("name"), "github")
         conn.close()
+
+    def test_list_large_output_above_64kb(self):
+        large_json = json.dumps(
+            {
+                "mode": "server",
+                "name": "github",
+                "status": "ok",
+                "tools": [
+                    {"name": f"tool_{i}", "description": "x" * 1000} for i in range(500)
+                ],
+            }
+        )
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET", "/list/github?json=true", headers={"X-MCP-Auth-Key": "agent-key"}
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        self.assertEqual(body.get("mode"), "server")
+        self.assertEqual(body.get("name"), "github")
+        self.assertGreater(len(body.get("tools", [])), 400)
