@@ -1,0 +1,86 @@
+{
+  "github": {
+    "env": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://api.github.com/repos/{owner}/{repo}/releases/assets/{asset_id}",
+      "headers": {
+        "Accept": "application/octet-stream",
+        "Authorization": "Bearer {token}"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://api.github.com/repos/{owner}/{repo}/releases",
+      "headers": {
+        "Authorization": "Bearer {token}"
+      }
+    }
+  },
+  "gitlab": {
+    "env": ["GITLAB_TOKEN"],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://gitlab.com/api/v4/projects/{project_id}/repository/files/{file_path}/raw",
+      "headers": {
+        "PRIVATE-TOKEN": "{token}"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://gitlab.com/api/v4/projects/{project_id}/uploads",
+      "headers": {
+        "PRIVATE-TOKEN": "{token}"
+      }
+    }
+  },
+  "confluence": {
+    "env": ["CONFLUENCE_API_TOKEN"],
+    "attachment_download": {
+      "type": "mcp_tool_redirect",
+      "tool_name": "atlassian.confluence_download_attachment",
+      "tool_args_mapping": {
+        "page_id": "{page_id}",
+        "filename": "{filename}"
+      },
+      "download_url_field": "download_url",
+      "headers": {
+        "Authorization": "Bearer {token}"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://your-domain.atlassian.com/wiki/rest/api/content/{page_id}/attachment",
+      "headers": {
+        "Authorization": "Bearer {token}",
+        "X-Atlassian-Token": "no-check"
+      }
+    }
+  },
+  "jira": {
+    "env": ["JIRA_API_TOKEN", "JIRA_EMAIL"],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://your-domain.atlassian.com/rest/api/3/attachment/{attachment_id}",
+      "headers": {
+        "Authorization": "Basic {basic_auth}",
+        "Accept": "application/octet-stream"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://your-domain.atlassian.com/rest/api/3/issue/{issue_key}/attachments",
+      "headers": {
+        "Authorization": "Basic {basic_auth}",
+        "X-Atlassian-Token": "no-check"
+      }
+    }
+  }
+}

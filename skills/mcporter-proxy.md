@@ -82,15 +82,7 @@ The `/list` endpoint wraps `mcporter list` command with support for `--json` and
 
 Configuration file: `server/mcp_env_map.json`
 
-### Minimal Config
-```json
-{
-  "github": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
-  "jira": ["JIRA_API_TOKEN"]
-}
-```
-
-### Full Config (with Attachment Download)
+### Full Config Format
 ```json
 {
   "github": {
@@ -99,6 +91,14 @@ Configuration file: `server/mcp_env_map.json`
       "type": "rest_api",
       "method": "GET",
       "url_template": "https://api.github.com/repos/{owner}/{repo}/releases/assets/{asset_id}",
+      "headers": {
+        "Authorization": "Bearer {token}"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://api.github.com/repos/{owner}/{repo}/releases",
       "headers": {
         "Authorization": "Bearer {token}"
       }

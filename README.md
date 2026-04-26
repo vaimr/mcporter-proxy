@@ -163,67 +163,53 @@ Response:
 { "status": "ok" }
 ```
 
-**Endpoint:** `GET /schema`
+**Endpoint:** `GET /list`
 
-Returns list of all registered mcptypes. Requires `X-MCP-Auth-Key` header.
+Returns list of servers with their tools. Wraps `mcporter list` command with token injection from gloves.
 
-Response:
-```json
-{
-  "mcptypes": ["github", "gitlab", "atlassian", "confluence", "jira", "cognee"]
-}
+**Query parameters:**
+- `json=true` - Returns JSON output (parsed from mcporter output)
+- `schema=true` - Includes full tool schemas
+
+**Endpoint:** `GET /list/<mcptype>`
+
+Returns information for a specific MCP type.
+
+**Example:**
+```bash
+# Text output (passthrough from mcporter)
+curl -H "X-MCP-Auth-Key: agent-key" http://localhost:8080/list
+
+# JSON output
+curl -H "X-MCP-Auth-Key: agent-key" "http://localhost:8080/list?json=true"
+
+# Specific server with schema
+curl -H "X-MCP-Auth-Key: agent-key" "http://localhost:8080/list/github?json=true&schema=true"
 ```
 
-**Endpoint:** `GET /schema/<mcptype>`
-
-Returns full schema for a specific mcptype including MCP tools from `mcporter list <mcptype> --schema` and attachment endpoints as pseudo-tools. Requires `X-MCP-Auth-Key` header.
-
-Response:
+**Response (JSON mode):**
 ```json
 {
-  "name": "github",
-  "tools": [
+  "mode": "list",
+  "counts": {"ok": 2, "auth": 0, "offline": 0, "http": 0, "error": 0},
+  "servers": [
     {
-      "name": "github.list_repos",
-      "description": "Lists repositories for the authenticated user",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "visibility": {"type": "string", "enum": ["all", "public", "private"]}
-        }
-      }
+      "name": "github",
+      "status": "ok",
+      "durationMs": 50,
+      "transport": "HTTP http://github:3000/mcp",
+      "source": {"kind": "local"},
+      "tools": [
+        {"name": "list_repos", "description": "List repositories", "inputSchema": {...}},
+        {"name": "github.attachment_download", "description": "...", "inputSchema": {...}},
+        {"name": "github.attachment_upload", "description": "...", "inputSchema": {...}}
+      ]
     }
-  ],
-  "attachment_download": {
-    "name": "github.attachment_download",
-    "description": "Download file attachment from platform",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "mcptype": {"const": "github"},
-        "args": {
-          "type": "object",
-          "properties": {
-            "owner": {"type": "string"},
-            "repo": {"type": "string"},
-            "asset_id": {"type": "string"},
-            "filename": {"type": "string"}
-          }
-        }
-      }
-    },
-    "_proxy_endpoint": "POST /download-attachment",
-    "_proxy_direction": "download"
-  },
-  "attachment_upload": {
-    "name": "github.attachment_upload",
-    "description": "Upload file attachment to platform",
-    "inputSchema": {...},
-    "_proxy_endpoint": "POST /upload-attachment",
-    "_proxy_direction": "upload"
-  }
+  ]
 }
 ```
+
+**Note:** Attachment tools (`attachment_download`, `attachment_upload`) are automatically injected for mcptypes that have corresponding download/upload configurations in `mcp_env_map.json`.
 
 **Endpoint:** `POST /call`
 

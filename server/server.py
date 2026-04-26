@@ -1079,41 +1079,45 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(result.stdout.encode("utf-8"))
 
     def _inject_attachment_tools(self, data: Any) -> None:
-        """Inject attachment_download/upload as meta-tools into server data."""
-        if not isinstance(data, dict):
-            return
-
-        # Handle single server mode: {"mode": "server", "name": "...", "tools": [...]}
-        if data.get("mode") == "server":
-            self._add_attachment_tools_to_server(data)
-            return
-
-        # Handle list mode: {"mode": "list", "servers": [...]}
-        servers = data.get("servers", [])
-        if isinstance(servers, list):
-            for server in servers:
-                self._add_attachment_tools_to_server(server)
+        inject_attachment_tools(data)
 
     def _add_attachment_tools_to_server(self, server: Dict[str, Any]) -> None:
-        """Add attachment_download and attachment_upload tools to a server's tools array."""
-        name = server.get("name")
-        if not name:
-            return
+        add_attachment_tools_to_server(server)
 
-        download_config = get_attachment_download_config(name)
-        upload_config = get_attachment_upload_config(name)
 
-        tools = server.get("tools", [])
+def inject_attachment_tools(data: Any) -> None:
+    if not isinstance(data, dict):
+        return
 
-        if download_config:
-            download_tool = build_attachment_schema(name, download_config, "download")
-            tools.append(download_tool)
+    if data.get("mode") == "server":
+        add_attachment_tools_to_server(data)
+        return
 
-        if upload_config:
-            upload_tool = build_attachment_schema(name, upload_config, "upload")
-            tools.append(upload_tool)
+    servers = data.get("servers", [])
+    if isinstance(servers, list):
+        for server in servers:
+            add_attachment_tools_to_server(server)
 
-        server["tools"] = tools
+
+def add_attachment_tools_to_server(server: Dict[str, Any]) -> None:
+    name = server.get("name")
+    if not name:
+        return
+
+    download_config = get_attachment_download_config(name)
+    upload_config = get_attachment_upload_config(name)
+
+    tools = server.get("tools", [])
+
+    if download_config:
+        download_tool = build_attachment_schema(name, download_config, "download")
+        tools.append(download_tool)
+
+    if upload_config:
+        upload_tool = build_attachment_schema(name, upload_config, "upload")
+        tools.append(upload_tool)
+
+    server["tools"] = tools
 
     def do_POST(self):
         if self.path == "/call":

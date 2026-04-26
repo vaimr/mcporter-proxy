@@ -3,6 +3,74 @@ description: |
   MCP proxy server that provides secure tool execution and file attachment downloads/uploads.
   Tokens are never exposed to agents - they're retrieved from gloves secrets manager.
 endpoints:
+  - path: /list
+    method: GET
+    description: List servers - wraps mcporter list with token injection and attachment tool injection
+    headers:
+      X-MCP-Auth-Key:
+        type: string
+        description: Auth key for agent (required)
+    query:
+      type: object
+      properties:
+        json:
+          type: boolean
+          description: Return JSON output (parsed from mcporter output)
+        schema:
+          type: boolean
+          description: Include full tool schemas
+    response:
+      type: object
+      properties:
+        mode:
+          type: string
+          description: "list" or "server"
+        counts:
+          type: object
+          description: Server status counts
+        servers:
+          type: array
+          description: List of servers with their tools
+    errors:
+      401: Missing or invalid auth key
+      500: mcporter execution failed
+
+  - path: /list/{mcptype}
+    method: GET
+    description: Get specific MCP type info
+    headers:
+      X-MCP-Auth-Key:
+        type: string
+        description: Auth key for agent (required)
+    query:
+      type: object
+      properties:
+        json:
+          type: boolean
+          description: Return JSON output
+        schema:
+          type: boolean
+          description: Include full tool schemas
+    response:
+      type: object
+      properties:
+        mode:
+          type: string
+          description: "server"
+        name:
+          type: string
+          description: MCP type name
+        status:
+          type: string
+          description: Server status
+        tools:
+          type: array
+          description: List of tools including injected attachment tools
+    errors:
+      401: Missing or invalid auth key
+      404: mcptype not found
+      500: mcporter execution failed
+
   - path: /call
     method: POST
     description: Execute MCP tool with environment variables injected from secrets
@@ -200,8 +268,13 @@ cli_usage:
   tool_call: mcporter-proxy call <tool> [args]
   download: mcporter-proxy download <platform> [args] [--output <path>]
   upload: mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]
+  list: mcporter-proxy list [name] [--json] [--schema]
   examples:
     - mcporter-proxy call github.list_repos visibility=private
     - mcporter-proxy download github owner=octocat repo=hello-world asset_id=123 --output release.zip
     - mcporter-proxy upload confluence page_id=123456 name=report.pdf --file ./report.pdf
     - mcporter-proxy upload jira issue_key=PROJ-123 name=attachment.zip --file ./attachment.zip
+    - mcporter-proxy list
+    - mcporter-proxy list github
+    - mcporter-proxy list --json
+    - mcporter-proxy list github --json --schema

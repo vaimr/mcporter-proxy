@@ -21,6 +21,9 @@ SERVER_SCRIPT = os.path.join(
 ENV_MAP_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "server", "mcp_env_map.json"
 )
+TEST_ENV_MAP_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "test_config.json"
+)
 BACKUP_ENV_MAP_PATH = os.path.join(tempfile.gettempdir(), "mcp_env_map.json.backup")
 
 
@@ -28,7 +31,8 @@ class TestEnvMap(unittest.TestCase):
     def setUp(self):
         with open(ENV_MAP_PATH, "r") as f:
             self.original_env_map = f.read()
-        self.env_map = json.loads(self.original_env_map)
+        with open(TEST_ENV_MAP_PATH, "r") as f:
+            self.test_env_map = f.read()
 
     def tearDown(self):
         with open(ENV_MAP_PATH, "w") as f:
@@ -39,12 +43,14 @@ class TestEnvMap(unittest.TestCase):
         importlib.reload(server.server)
 
     def test_env_map_structure(self):
+        self.env_map = json.loads(self.test_env_map)
         self.assertIn("github", self.env_map)
         self.assertIn("gitlab", self.env_map)
         self.assertIn("confluence", self.env_map)
         self.assertIn("jira", self.env_map)
 
     def test_github_config(self):
+        self.env_map = json.loads(self.test_env_map)
         github = self.env_map["github"]
         self.assertIsInstance(github, dict)
         self.assertIn("env", github)
@@ -54,18 +60,21 @@ class TestEnvMap(unittest.TestCase):
         self.assertIn("url_template", github["attachment_download"])
 
     def test_gitlab_config(self):
+        self.env_map = json.loads(self.test_env_map)
         gitlab = self.env_map["gitlab"]
         self.assertIsInstance(gitlab, dict)
         self.assertIn("env", gitlab)
         self.assertIn("attachment_download", gitlab)
 
     def test_confluence_config(self):
+        self.env_map = json.loads(self.test_env_map)
         confluence = self.env_map["confluence"]
         self.assertIsInstance(confluence, dict)
         self.assertEqual(confluence["attachment_download"]["type"], "mcp_tool_redirect")
         self.assertIn("tool_name", confluence["attachment_download"])
 
     def test_jira_config(self):
+        self.env_map = json.loads(self.test_env_map)
         jira = self.env_map["jira"]
         self.assertIsInstance(jira, dict)
         self.assertEqual(jira["attachment_download"]["type"], "rest_api")
@@ -112,6 +121,10 @@ class TestGetEnvVarsForMcptype(unittest.TestCase):
     def setUp(self):
         with open(ENV_MAP_PATH, "r") as f:
             self.original_env_map = f.read()
+        with open(TEST_ENV_MAP_PATH, "r") as f:
+            test_config = f.read()
+        with open(ENV_MAP_PATH, "w") as f:
+            f.write(test_config)
         import importlib
         import server.server
 
@@ -1080,7 +1093,13 @@ class TestSchemaEndpoint(unittest.TestCase):
 
 class TestInjectAttachmentTools(unittest.TestCase):
     def test_inject_to_list_mode(self):
-        from server.server import MCPorterProxyHandler
+        from server.server import inject_attachment_tools
+        from unittest.mock import patch
+
+        mock_config = {
+            "type": "rest_api",
+            "url_template": "https://example.com/{id}",
+        }
 
         data = {
             "mode": "list",
@@ -1089,7 +1108,16 @@ class TestInjectAttachmentTools(unittest.TestCase):
                 {"name": "gitlab", "tools": []},
             ],
         }
-        MCPorterProxyHandler()._inject_attachment_tools(data)
+        with (
+            patch(
+                "server.server.get_attachment_download_config", return_value=mock_config
+            ),
+            patch(
+                "server.server.get_attachment_upload_config", return_value=mock_config
+            ),
+        ):
+            inject_attachment_tools(data)
+
         github_tools = data["servers"][0]["tools"]
         self.assertTrue(
             any(t["name"] == "github.attachment_download" for t in github_tools)
@@ -1099,43 +1127,71 @@ class TestInjectAttachmentTools(unittest.TestCase):
         )
 
     def test_inject_to_server_mode(self):
-        from server.server import MCPorterProxyHandler
+        from server.server import inject_attachment_tools
+        from unittest.mock import patch
+
+        mock_config = {
+            "type": "rest_api",
+            "url_template": "https://example.com/{id}",
+        }
 
         data = {"mode": "server", "name": "github", "tools": [{"name": "list_repos"}]}
-        MCPorterProxyHandler()._inject_attachment_tools(data)
+        with (
+            patch(
+                "server.server.get_attachment_download_config", return_value=mock_config
+            ),
+            patch(
+                "server.server.get_attachment_upload_config", return_value=mock_config
+            ),
+        ):
+            inject_attachment_tools(data)
         self.assertTrue(
             any(t["name"] == "github.attachment_download" for t in data["tools"])
         )
 
     def test_inject_no_name_server(self):
-        from server.server import MCPorterProxyHandler
+        from server.server import inject_attachment_tools
 
         data = {"mode": "server", "tools": []}
-        MCPorterProxyHandler()._inject_attachment_tools(data)
+        inject_attachment_tools(data)
         self.assertEqual(data["tools"], [])
 
     def test_inject_non_dict_data(self):
-        from server.server import MCPorterProxyHandler
+        from server.server import inject_attachment_tools
 
         data = ["not", "a", "dict"]
-        MCPorterProxyHandler()._inject_attachment_tools(data)
+        inject_attachment_tools(data)
 
     def test_inject_unknown_mcptype_no_attachments(self):
-        from server.server import MCPorterProxyHandler
+        from server.server import inject_attachment_tools
 
         data = {"mode": "server", "name": "nonexistent", "tools": []}
-        MCPorterProxyHandler()._inject_attachment_tools(data)
+        inject_attachment_tools(data)
         self.assertEqual(len(data["tools"]), 0)
 
     def test_preserve_existing_tools(self):
-        from server.server import MCPorterProxyHandler
+        from server.server import inject_attachment_tools
+        from unittest.mock import patch
+
+        mock_config = {
+            "type": "rest_api",
+            "url_template": "https://example.com/{id}",
+        }
 
         data = {
             "mode": "server",
             "name": "github",
             "tools": [{"name": "list_repos"}, {"name": "create_gist"}],
         }
-        MCPorterProxyHandler()._inject_attachment_tools(data)
+        with (
+            patch(
+                "server.server.get_attachment_download_config", return_value=mock_config
+            ),
+            patch(
+                "server.server.get_attachment_upload_config", return_value=mock_config
+            ),
+        ):
+            inject_attachment_tools(data)
         self.assertEqual(len(data["tools"]), 4)
         tool_names = [t["name"] for t in data["tools"]]
         self.assertIn("list_repos", tool_names)

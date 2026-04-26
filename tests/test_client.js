@@ -6,8 +6,7 @@ const os = require("os");
 
 const client = "./client/mcporter-proxy.js";
 
-// Import parse functions directly for unit testing
-const { parseDownloadArgs, parseUploadArgs } = require("../client/mcporter-proxy.js");
+const { parseDownloadArgs, parseUploadArgs, parseListArgs } = require("../client/mcporter-proxy.js");
 
 function run(args, env = {}) {
   const result = spawnSync("node", [client, ...args], {
@@ -17,7 +16,8 @@ function run(args, env = {}) {
   return { stdout: result.stdout, stderr: result.stderr, status: result.status };
 }
 
-// Unit tests for parseDownloadArgs
+console.log("=== Unit Tests ===\n");
+
 console.log("Testing parseDownloadArgs...");
 
 let downloadResult = parseDownloadArgs(["github", "owner=octocat", "--output", "/tmp/test.zip"]);
@@ -40,8 +40,7 @@ assert.strictEqual(downloadResult.args.page_id, 123, "Should parse numeric value
 assert.strictEqual(downloadResult.args.attachment_id, 456, "Should parse multiple numeric args");
 console.log("✅ parseDownloadArgs with numeric values");
 
-// Unit tests for parseUploadArgs
-console.log("Testing parseUploadArgs...");
+console.log("\nTesting parseUploadArgs...");
 
 let uploadResult = parseUploadArgs(["confluence", "page_id=123", "--file", "/tmp/doc.pdf"]);
 assert.strictEqual(uploadResult.filePath, "/tmp/doc.pdf", "Should parse --file with space");
@@ -59,8 +58,40 @@ assert.strictEqual(uploadResult.filePath, null, "Should return null filePath whe
 assert.strictEqual(uploadResult.contentType, "application/octet-stream", "Should default contentType");
 console.log("✅ parseUploadArgs without --file");
 
-// Integration tests
-console.log("\nIntegration tests:");
+console.log("\nTesting parseListArgs...");
+
+let listResult = parseListArgs([]);
+assert.strictEqual(listResult.name, null, "Should have null name for empty args");
+assert.strictEqual(listResult.outputFormat, "text", "Should default to text format");
+assert.strictEqual(listResult.wantSchema, false, "Should default to no schema");
+console.log("✅ parseListArgs with no args");
+
+listResult = parseListArgs(["github"]);
+assert.strictEqual(listResult.name, "github", "Should parse name");
+assert.strictEqual(listResult.outputFormat, "text", "Should default to text format");
+console.log("✅ parseListArgs with name only");
+
+listResult = parseListArgs(["--json"]);
+assert.strictEqual(listResult.name, "--json", "Should treat --json as name when no positional args");
+assert.strictEqual(listResult.outputFormat, "text", "Should default to text when flags not recognized as such");
+console.log("✅ parseListArgs with --json as first arg");
+
+listResult = parseListArgs(["github", "--json"]);
+assert.strictEqual(listResult.name, "github", "Should parse name with --json");
+assert.strictEqual(listResult.outputFormat, "json", "Should parse --json");
+console.log("✅ parseListArgs with name and --json");
+
+listResult = parseListArgs(["--schema"]);
+assert.strictEqual(listResult.name, "--schema", "Should treat --schema as name when no positional args");
+console.log("✅ parseListArgs with --schema as first arg");
+
+listResult = parseListArgs(["github", "--json", "--schema"]);
+assert.strictEqual(listResult.name, "github", "Should parse name");
+assert.strictEqual(listResult.outputFormat, "json", "Should parse --json");
+assert.strictEqual(listResult.wantSchema, true, "Should parse --schema");
+console.log("✅ parseListArgs with name, --json, and --schema");
+
+console.log("\n=== Integration Tests ===\n");
 
 console.log("Testing error when MCPORTER_PROXY_AUTH_KEY is not set...");
 const noAuth = run(["call", "cognee.list_data"]);
@@ -78,6 +109,7 @@ const help = run(["help"]);
 assert.strictEqual(help.status, 0, "Help should exit with 0");
 assert.ok(help.stdout.includes("mcporter-proxy"), "Help should show usage");
 assert.ok(help.stdout.includes("download"), "Help should mention download command");
+assert.ok(help.stdout.includes("list"), "Help should mention list command");
 console.log("✅ Help command works");
 
 console.log("Testing unknown command...");
@@ -97,4 +129,11 @@ const withOutput = run(["download", "github", "owner=octocat", "--output", "/tmp
 assert.notStrictEqual(withOutput.status, 0, "Should try download even with output");
 console.log("✅ Download with --output flag parsed correctly");
 
-console.log("All tests passed.");
+console.log("Testing list help in help output...");
+const helpList = run(["help"]);
+assert.ok(helpList.stdout.includes("list"), "Help should show list command");
+assert.ok(helpList.stdout.includes("--json"), "Help should show --json flag");
+assert.ok(helpList.stdout.includes("--schema"), "Help should show --schema flag");
+console.log("✅ Help includes list command documentation");
+
+console.log("\n✅ All tests passed.");
