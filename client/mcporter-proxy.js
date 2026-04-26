@@ -275,6 +275,11 @@ function parseListArgs(args) {
     }
   }
 
+  if (outputFormat === "json" && wantSchema) {
+    console.error("Error: --json and --schema cannot be used together");
+    process.exit(1);
+  }
+
   log("DEBUG", `Parsed list: name=${name}, format=${outputFormat}, schema=${wantSchema}, allParameters=${wantAllParameters}`);
   return { name, outputFormat, wantSchema, wantAllParameters };
 }
@@ -499,14 +504,14 @@ Usage:
   mcporter-proxy call <tool> [args]
   mcporter-proxy download <platform> [args] [--output <path>]
   mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]
-  mcporter-proxy list [name] [--json] [--schema] [--all-parameters]
+  mcporter-proxy list [name] [--json | --schema] [--all-parameters]
   mcporter-proxy help
 
 Commands:
   call      Execute an MCP tool
   download Download an attachment
   upload    Upload an attachment
-  list      List servers (mcporter list passthrough with --json, --schema, and --all-parameters support)
+  list      List servers (mcporter list passthrough with --json or --schema, plus --all-parameters)
 
 Examples:
   mcporter-proxy call github.list_repos visibility=private
@@ -516,8 +521,8 @@ Examples:
   mcporter-proxy list
   mcporter-proxy list github
   mcporter-proxy list --json
-  mcporter-proxy list github --json --schema
-  mcporter-proxy list github --json --schema --all-parameters
+  mcporter-proxy list github --schema
+  mcporter-proxy list github --json --all-parameters
 `);
     process.exit(0);
   } else {

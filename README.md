@@ -168,9 +168,11 @@ Response:
 Returns list of servers with their tools. Wraps `mcporter list` command with token injection.
 
 **Query parameters:**
-- `json=true` - Returns JSON output (parsed from mcporter output)
-- `schema=true` - Includes full tool schemas (inputSchema, options). Without this flag, meta-tools (attachment_download, attachment_upload) return only name and description
+- `json=true` - Returns JSON output (parsed from mcporter output). Meta-tools return only name and description.
+- `schema=true` - Returns JSON output with full tool schemas (inputSchema, options). Meta-tools include full schema.
 - `all_parameters=true` - Passes `--all-parameters` to mcporter for including optional parameters in schema
+
+**Note:** `json=true` and `schema=true` are mutually exclusive.
 
 **Endpoint:** `GET /list/<mcptype>`
 
@@ -185,7 +187,7 @@ curl -H "X-MCP-Auth-Key: agent-key" http://localhost:8080/list
 curl -H "X-MCP-Auth-Key: agent-key" "http://localhost:8080/list?json=true"
 
 # Specific server with schema
-curl -H "X-MCP-Auth-Key: agent-key" "http://localhost:8080/list/github?json=true&schema=true"
+curl -H "X-MCP-Auth-Key: agent-key" "http://localhost:8080/list/github?schema=true"
 ```
 
 **Response (JSON mode):**

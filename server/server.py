@@ -310,6 +310,44 @@ def _camel_to_kebab(name: str) -> str:
     return "".join(result).rstrip("-")
 
 
+def format_tool_as_text_schema(tool: Dict[str, Any]) -> str:
+    name = tool.get("name", "")
+    description = tool.get("description", "")
+    input_schema = tool.get("inputSchema", {})
+    properties = input_schema.get("properties", {})
+    args_props = properties.get("args", {}).get("properties", {})
+    if not args_props:
+        args_props = {k: v for k, v in properties.items() if k != "mcptype"}
+
+    lines = [f"  function {name}(", f"      /*{description}*/"]
+    for prop_name, prop_value in args_props.items():
+        if prop_name in ("mcptype", "_proxy_endpoint", "_proxy_direction"):
+            continue
+        if not isinstance(prop_value, dict):
+            continue
+        prop_type = prop_value.get("type", "string")
+        lines.append(f"      {prop_name}: {prop_type},")
+    lines.append("  );")
+    return "\n".join(lines)
+
+
+def build_attachment_text_schema_for_mcptype(mcptype: str) -> Optional[str]:
+    download_config = get_attachment_download_config(mcptype)
+    upload_config = get_attachment_upload_config(mcptype)
+
+    lines = []
+    if download_config:
+        download_tool = build_attachment_schema(mcptype, download_config, "download")
+        lines.append(format_tool_as_text_schema(download_tool))
+    if upload_config:
+        upload_tool = build_attachment_schema(mcptype, upload_config, "upload")
+        lines.append(format_tool_as_text_schema(upload_tool))
+
+    if not lines:
+        return None
+    return "\n\nMeta-tools (attachment tools):\n" + "\n".join(lines) + "\n"
+
+
 def transform_meta_tool(
     tool: Dict[str, Any], include_schema: bool = True
 ) -> Dict[str, Any]:
@@ -1132,13 +1170,16 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         use_schema = "schema" in params
         use_all_params = "all_parameters" in params
 
-        # Build mcporter command
+        if use_json and use_schema:
+            self.send_error(400, "--json and --schema cannot be used together")
+            return
+
         cmd = ["mcporter", "list"]
         if name:
             cmd.append(name)
         if use_json:
             cmd.append("--json")
-        if use_schema:
+        elif use_schema:
             cmd.append("--schema")
         if use_all_params:
             cmd.append("--all-parameters")
@@ -1232,7 +1273,6 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 self.send_error(500, f"Invalid JSON from mcporter: {stderr[:200]}")
                 return
 
-            # Inject attachment tools into each server's tools array
             self._inject_attachment_tools(data, include_schema=use_schema)
 
             self.send_response(200)
@@ -1240,11 +1280,20 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data).encode("utf-8"))
         else:
-            # Plain text passthrough
+            output = stdout
+            if use_schema:
+                meta_parts = []
+                mcptypes_to_append = [name] if name else list(MCP_ENV_MAP.keys())
+                for mt in mcptypes_to_append:
+                    meta_schema = build_attachment_text_schema_for_mcptype(mt)
+                    if meta_schema:
+                        meta_parts.append(meta_schema)
+                if meta_parts:
+                    output = stdout + "\n" + "\n".join(meta_parts)
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
-            self.wfile.write(stdout.encode("utf-8"))
+            self.wfile.write(output.encode("utf-8"))
 
     def _inject_attachment_tools(self, data: Any, include_schema: bool = True) -> None:
         inject_attachment_tools(data, include_schema=include_schema)

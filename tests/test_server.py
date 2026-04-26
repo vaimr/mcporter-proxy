@@ -1456,23 +1456,44 @@ class TestListEndpoint(unittest.TestCase):
                 + "}]}"
             )
             script = f"""#!/bin/bash
-if [[ "$*" == *"json"* ]]; then
-    if [[ "$*" == *"github"* ]]; then
-        echo '{github_response}'
-    elif [[ "$*" == *"atlassian"* ]]; then
-        echo '{atlassian_response}'
-    else
-        echo '{list_response}'
-    fi
-else
-    echo "mcporter 0.9.0 — Listing 3 server(s)"
-    echo "- github (12 tools, 0.1s)"
-    echo "- gitlab (8 tools, 0.1s)"
-    echo "- atlassian (15 tools, 0.1s)"
-    echo "✔ Listed 3 servers (3 healthy; 0 errors)."
-fi
-exit 0
-"""
+            if [[ "$*" == *"json"* ]]; then
+                if [[ "$*" == *"github"* ]]; then
+                    echo '{github_response}'
+                elif [[ "$*" == *"atlassian"* ]]; then
+                    echo '{atlassian_response}'
+                else
+                    echo '{list_response}'
+                fi
+            elif [[ "$*" == *"schema"* ]]; then
+                if [[ "$*" == *"github"* ]]; then
+                    echo 'github'
+                    echo ''
+                    echo '  /**'
+                    echo '   * List repositories'
+                    echo '   */'
+                    echo '  function list_repos(visibility: string);'
+                elif [[ "$*" == *"atlassian"* ]]; then
+                    echo 'atlassian'
+                    echo ''
+                    echo '  /**'
+                    echo '   * Delete attachment'
+                    echo '   */'
+                    echo '  function confluence_delete_attachment(page_id: string);'
+                else
+                    echo 'mcporter 0.9.0 — Listing 3 server(s)'
+                    echo '- github (12 tools, 0.1s)'
+                    echo '- gitlab (8 tools, 0.1s)'
+                    echo '- atlassian (15 tools, 0.1s)'
+                fi
+            else
+                echo "mcporter 0.9.0 — Listing 3 server(s)"
+                echo "- github (12 tools, 0.1s)"
+                echo "- gitlab (8 tools, 0.1s)"
+                echo "- atlassian (15 tools, 0.1s)"
+                echo "✔ Listed 3 servers (3 healthy; 0 errors)."
+            fi
+            exit 0
+            """
             f.write(script)
         os.chmod(cls.mock_mcporter_path, 0o755)
 
@@ -1618,7 +1639,7 @@ exit 0
         conn = HTTPConnection("localhost", SERVER_PORT)
         conn.request(
             "GET",
-            "/list/github?json=true&schema=true",
+            "/list/github?schema=true",
             headers={"X-MCP-Auth-Key": "agent-key"},
         )
         resp = conn.getresponse()
@@ -1726,3 +1747,53 @@ exit 0
         self.assertIn("owner", option_names)
         self.assertIn("repo", option_names)
         self.assertIn("name", option_names)
+
+    def test_list_schema_flag_only_returns_text_with_meta_tools_appended(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET",
+            "/list/github?schema=true",
+            headers={"X-MCP-Auth-Key": "agent-key"},
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        content_type = resp.getheader("Content-Type", "")
+        self.assertIn("text/plain", content_type)
+        body = resp.read().decode()
+        self.assertIn("github", body)
+        self.assertIn("list_repos", body)
+        self.assertIn("github.attachment_download", body)
+        self.assertIn("github.attachment_upload", body)
+        self.assertIn("owner", body)
+        self.assertIn("repo", body)
+
+    def test_list_json_and_schema_together_returns_error(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET",
+            "/list/github?json=true&schema=true",
+            headers={"X-MCP-Auth-Key": "agent-key"},
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 400)
+        body = resp.read().decode()
+        self.assertIn("json", body.lower())
+        self.assertIn("schema", body.lower())
+
+    def test_list_atlassian_with_schema_flag_appends_attachment_tools(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET",
+            "/list/atlassian?schema=true",
+            headers={"X-MCP-Auth-Key": "agent-key"},
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        content_type = resp.getheader("Content-Type", "")
+        self.assertIn("text/plain", content_type)
+        body = resp.read().decode()
+        self.assertIn("atlassian", body)
+        self.assertIn("confluence_delete_attachment", body)
+        self.assertIn("atlassian.attachment_download", body)
+        self.assertIn("atlassian.attachment_upload", body)
+        self.assertIn("page_id", body)

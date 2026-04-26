@@ -15,10 +15,12 @@ endpoints:
       properties:
         json:
           type: boolean
-          description: Return JSON output (parsed from mcporter output)
+          description: Return JSON output. Meta-tools return only name and description. Mutually exclusive with schema.
+          mutually_exclusive_with: schema
         schema:
           type: boolean
-          description: Include full tool schemas (inputSchema, options). Without this flag, meta-tools return only name and description.
+          description: Return JSON output with full tool schemas. Meta-tools include inputSchema and options. Mutually exclusive with json.
+          mutually_exclusive_with: json
         all_parameters:
           type: boolean
           description: Pass --all-parameters to mcporter for including optional parameters in schema
@@ -33,8 +35,9 @@ endpoints:
           description: Server status counts
         servers:
           type: array
-          description: List of servers with their tools. Meta-tools (attachment_download, attachment_upload) return only name+description without schema flag, or full schema with inputSchema and options when schema=true
+          description: List of servers with their tools
     errors:
+      400: Invalid query parameters (json and schema are mutually exclusive)
       401: Missing or invalid auth key
       500: mcporter execution failed
 
@@ -50,10 +53,12 @@ endpoints:
       properties:
         json:
           type: boolean
-          description: Return JSON output
+          description: Return JSON output. Meta-tools return only name and description.
+          mutually_exclusive_with: schema
         schema:
           type: boolean
-          description: Include full tool schemas (inputSchema, options)
+          description: Return JSON output with full tool schemas. Meta-tools include inputSchema and options.
+          mutually_exclusive_with: json
         all_parameters:
           type: boolean
           description: Pass --all-parameters to mcporter
@@ -71,7 +76,7 @@ endpoints:
           description: Server status
         tools:
           type: array
-          description: List of tools including injected attachment tools. Meta-tools return name+description only unless schema=true
+          description: List of tools including injected attachment tools
     errors:
       401: Missing or invalid auth key
       404: mcptype not found
