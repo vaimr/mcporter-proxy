@@ -386,7 +386,7 @@ exit 0
         content_type = resp.getheader("Content-Type", "")
         content_disposition = resp.getheader("Content-Disposition", "")
         self.assertIn("attachment", content_disposition.lower())
-        self.assertIn('filename="', content_disposition)
+        self.assertIn("filename*=", content_disposition)
         self.assertNotIn("multipart/form-data", content_type)
         self.assertNotIn(
             "--simpleboundary", response_body.decode("utf-8", errors="replace")

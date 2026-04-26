@@ -924,7 +924,8 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header(
-                "Content-Disposition", f'attachment; filename="{filename}"'
+                "Content-Disposition",
+                f"attachment; filename*=UTF-8''{urllib.parse.quote(filename, safe='')}",
             )
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
