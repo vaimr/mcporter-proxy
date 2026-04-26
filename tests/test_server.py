@@ -775,7 +775,90 @@ class TestDownloadViaRest(unittest.TestCase):
             self.assertEqual(request.get_method(), "POST")
 
 
-class TestConfigValidation(unittest.TestCase):
+class TestBuildHeaders(unittest.TestCase):
+    """Test build_headers function with ${ENV_VAR} syntax."""
+
+    def test_build_headers_with_token_placeholder(self):
+        from server.server import build_headers
+
+        headers_template = {"Authorization": "Bearer {token}"}
+        token = "secret_token_value"
+        extra_secrets = {}
+        args = {}
+
+        headers = build_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["Authorization"], "Bearer secret_token_value")
+
+    def test_build_headers_with_env_var_syntax(self):
+        from server.server import build_headers
+
+        headers_template = {"Authorization": "Bearer ${ATLASSIAN_TOKEN}"}
+        token = "primary_token"
+        extra_secrets = {"ATLASSIAN_TOKEN": "resolved_token_from_gloves"}
+        args = {}
+
+        headers = build_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["Authorization"], "Bearer resolved_token_from_gloves")
+
+    def test_build_headers_with_multiple_env_vars(self):
+        from server.server import build_headers
+
+        headers_template = {
+            "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+            "X-Custom": "Token1=${TOKEN_1}, Token2=${TOKEN_2}",
+        }
+        token = "primary_token"
+        extra_secrets = {
+            "ATLASSIAN_TOKEN": "token1",
+            "TOKEN_1": "extra1",
+            "TOKEN_2": "extra2",
+        }
+        args = {}
+
+        headers = build_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["Authorization"], "Bearer token1")
+        self.assertEqual(headers["X-Custom"], "Token1=extra1, Token2=extra2")
+
+    def test_build_headers_env_var_fallback_to_os_environ(self):
+        import os
+        from server.server import build_headers
+
+        os.environ["TEST_OS_VAR"] = "os_value"
+        headers_template = {"X-Test": "Value=${TEST_OS_VAR}"}
+        token = "token"
+        extra_secrets = {}  # not in extra_secrets
+        args = {}
+
+        headers = build_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["X-Test"], "Value=os_value")
+        del os.environ["TEST_OS_VAR"]
+
+    def test_build_headers_with_basic_auth(self):
+        from server.server import build_headers
+
+        headers_template = {"Authorization": "Basic {basic_auth}"}
+        token = "api_token"
+        extra_secrets = {"email": "user@example.com"}
+        args = {}
+
+        headers = build_headers(headers_template, token, extra_secrets, args)
+        # Basic auth is email:token base64 encoded
+        import base64
+
+        expected = base64.b64encode(b"user@example.com:api_token").decode()
+        self.assertEqual(headers["Authorization"], f"Basic {expected}")
+
+    def test_build_headers_with_args_substitution(self):
+        from server.server import build_headers
+
+        headers_template = {"X-Filename": "{filename}"}
+        token = "token"
+        extra_secrets = {}
+        args = {"filename": "report.pdf"}
+
+        headers = build_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["X-Filename"], "report.pdf")
+
     def test_invalid_type_validation(self):
         from server.server import validate_config
 

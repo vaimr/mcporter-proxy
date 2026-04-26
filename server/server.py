@@ -258,6 +258,11 @@ def build_headers(
             result = result.replace(
                 "{basic_auth}", base64.b64encode(auth_string.encode()).decode()
             )
+        # Support ${ENV_VAR} syntax - read from extra_secrets (resolved via gloves)
+        for match in re.finditer(r"\$\{([^}]+)\}", result):
+            env_name = match.group(1)
+            env_value = extra_secrets.get(env_name, os.environ.get(env_name, ""))
+            result = result.replace(f"${{{env_name}}}", env_value)
         for arg_key, arg_val in args.items():
             result = result.replace(f"{{{arg_key}}}", str(arg_val))
         headers[key] = result
@@ -847,6 +852,10 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         token = resolve_token(mcptype, agent_id, agent_key)
         extra_secrets = resolve_extra_secrets(mcptype, agent_id, agent_key)
         extra_secrets["_auth_key"] = auth_key
+        # Add primary token to extra_secrets so ${ENV_VAR} can reference it
+        env_vars = get_env_vars_for_mcptype(mcptype)
+        if isinstance(env_vars, list) and len(env_vars) > 0 and token:
+            extra_secrets[env_vars[0]] = token
 
         try:
             if download_type == "rest_api":
