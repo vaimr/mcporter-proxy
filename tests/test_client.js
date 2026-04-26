@@ -6,6 +6,9 @@ const os = require("os");
 
 const client = "./client/mcporter-proxy.js";
 
+// Import parse functions directly for unit testing
+const { parseDownloadArgs, parseUploadArgs } = require("../client/mcporter-proxy.js");
+
 function run(args, env = {}) {
   const result = spawnSync("node", [client, ...args], {
     encoding: "utf-8",
@@ -13,6 +16,51 @@ function run(args, env = {}) {
   });
   return { stdout: result.stdout, stderr: result.stderr, status: result.status };
 }
+
+// Unit tests for parseDownloadArgs
+console.log("Testing parseDownloadArgs...");
+
+let downloadResult = parseDownloadArgs(["github", "owner=octocat", "--output", "/tmp/test.zip"]);
+assert.strictEqual(downloadResult.outputPath, "/tmp/test.zip", "Should parse --output with space");
+assert.strictEqual(downloadResult.mcptype, "github", "Should parse mcptype");
+assert.strictEqual(downloadResult.args.owner, "octocat", "Should parse key=value args");
+console.log("✅ parseDownloadArgs with --output space syntax");
+
+downloadResult = parseDownloadArgs(["github", "owner=octocat", "--output=/tmp/test2.zip"]);
+assert.strictEqual(downloadResult.outputPath, "/tmp/test2.zip", "Should parse --output= with equals");
+console.log("✅ parseDownloadArgs with --output= equals syntax");
+
+downloadResult = parseDownloadArgs(["gitlab", "project_id=123", "ref=main"]);
+assert.strictEqual(downloadResult.outputPath, null, "Should return null outputPath when no --output");
+assert.strictEqual(downloadResult.mcptype, "gitlab", "Should parse mcptype without output");
+console.log("✅ parseDownloadArgs without --output");
+
+downloadResult = parseDownloadArgs(["confluence", "page_id=123", "attachment_id=456", "--output", "/tmp/file.pdf"]);
+assert.strictEqual(downloadResult.args.page_id, 123, "Should parse numeric values");
+assert.strictEqual(downloadResult.args.attachment_id, 456, "Should parse multiple numeric args");
+console.log("✅ parseDownloadArgs with numeric values");
+
+// Unit tests for parseUploadArgs
+console.log("Testing parseUploadArgs...");
+
+let uploadResult = parseUploadArgs(["confluence", "page_id=123", "--file", "/tmp/doc.pdf"]);
+assert.strictEqual(uploadResult.filePath, "/tmp/doc.pdf", "Should parse --file with space");
+assert.strictEqual(uploadResult.mcptype, "confluence", "Should parse mcptype");
+assert.strictEqual(uploadResult.args.page_id, 123, "Should parse page_id");
+console.log("✅ parseUploadArgs with --file space syntax");
+
+uploadResult = parseUploadArgs(["jira", "issue_key=PROJ-123", "--file=/tmp/att.zip", "--content-type=application/zip"]);
+assert.strictEqual(uploadResult.filePath, "/tmp/att.zip", "Should parse --file= with equals");
+assert.strictEqual(uploadResult.contentType, "application/zip", "Should parse --content-type");
+console.log("✅ parseUploadArgs with --file= and --content-type= syntax");
+
+uploadResult = parseUploadArgs(["github", "name=release.zip"]);
+assert.strictEqual(uploadResult.filePath, null, "Should return null filePath when no --file");
+assert.strictEqual(uploadResult.contentType, "application/octet-stream", "Should default contentType");
+console.log("✅ parseUploadArgs without --file");
+
+// Integration tests
+console.log("\nIntegration tests:");
 
 console.log("Testing error when MCPORTER_PROXY_AUTH_KEY is not set...");
 const noAuth = run(["call", "cognee.list_data"]);

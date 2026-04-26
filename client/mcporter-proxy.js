@@ -398,7 +398,13 @@ Examples:
   }
 }
 
-main().catch(err => {
-  console.error(err.message);
-  process.exit(1);
-});
+// Export for testing
+module.exports = { parseDownloadArgs, parseUploadArgs };
+
+// Only run main when executed directly, not when imported
+if (require.main === module) {
+  main().catch(err => {
+    console.error(err.message);
+    process.exit(1);
+  });
+}
