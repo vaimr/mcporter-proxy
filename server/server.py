@@ -1301,47 +1301,6 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
     def _add_attachment_tools_to_server(self, server: Dict[str, Any]) -> None:
         add_attachment_tools_to_server(server, include_schema=True)
 
-
-def inject_attachment_tools(data: Any, include_schema: bool = True) -> None:
-    if not isinstance(data, dict):
-        return
-
-    if data.get("mode") == "server":
-        add_attachment_tools_to_server(data, include_schema=include_schema)
-        return
-
-    servers = data.get("servers", [])
-    if isinstance(servers, list):
-        for server in servers:
-            add_attachment_tools_to_server(server, include_schema=include_schema)
-
-
-def add_attachment_tools_to_server(
-    server: Dict[str, Any], include_schema: bool = True
-) -> None:
-    name = server.get("name")
-    if not name:
-        return
-
-    download_config = get_attachment_download_config(name)
-    upload_config = get_attachment_upload_config(name)
-
-    tools = server.get("tools", [])
-
-    if download_config:
-        download_tool = build_attachment_schema(name, download_config, "download")
-        download_tool = transform_meta_tool(
-            download_tool, include_schema=include_schema
-        )
-        tools.append(download_tool)
-
-    if upload_config:
-        upload_tool = build_attachment_schema(name, upload_config, "upload")
-        upload_tool = transform_meta_tool(upload_tool, include_schema=include_schema)
-        tools.append(upload_tool)
-
-    server["tools"] = tools
-
     def do_POST(self):
         if self.path == "/call":
             self._handle_call()
@@ -1751,6 +1710,46 @@ def add_attachment_tools_to_server(
     def log_message(self, format, *args):
         pass
 
+
+def inject_attachment_tools(data: Any, include_schema: bool = True) -> None:
+    if not isinstance(data, dict):
+        return
+
+    if data.get("mode") == "server":
+        add_attachment_tools_to_server(data, include_schema=include_schema)
+        return
+
+    servers = data.get("servers", [])
+    if isinstance(servers, list):
+        for server in servers:
+            add_attachment_tools_to_server(server, include_schema=include_schema)
+
+
+def add_attachment_tools_to_server(
+        server: Dict[str, Any], include_schema: bool = True
+) -> None:
+    name = server.get("name")
+    if not name:
+        return
+
+    download_config = get_attachment_download_config(name)
+    upload_config = get_attachment_upload_config(name)
+
+    tools = server.get("tools", [])
+
+    if download_config:
+        download_tool = build_attachment_schema(name, download_config, "download")
+        download_tool = transform_meta_tool(
+            download_tool, include_schema=include_schema
+        )
+        tools.append(download_tool)
+
+    if upload_config:
+        upload_tool = build_attachment_schema(name, upload_config, "upload")
+        upload_tool = transform_meta_tool(upload_tool, include_schema=include_schema)
+        tools.append(upload_tool)
+
+    server["tools"] = tools
 
 def main():
     import signal

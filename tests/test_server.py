@@ -431,9 +431,6 @@ class TestGenerateMultipart(unittest.TestCase):
 class TestDownloadAttachmentEndpoint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(ENV_MAP_PATH, "r") as f:
-            cls.original_env_map = f.read()
-
         test_config = {
             "github": {
                 "env": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
@@ -442,6 +439,14 @@ class TestDownloadAttachmentEndpoint(unittest.TestCase):
                     "method": "GET",
                     "url_template": "https://httpbin.org/get",
                     "headers": {"Authorization": "Bearer {token}"},
+                },
+            },
+            "atlassian": {
+                "env": ["ATLASSIAN_API_TOKEN"],
+                "attachment_download": {
+                    "type": "mcp_tool",
+                    "tool_name": "test_tool_direct",
+                    "tool_args_mapping": {"attachment_id": "{attachment_id}"},
                 },
             },
             "confluence_test": {
@@ -463,8 +468,11 @@ class TestDownloadAttachmentEndpoint(unittest.TestCase):
                 },
             },
         }
-        with open(ENV_MAP_PATH, "w") as f:
-            json.dump(test_config, f)
+        cls.temp_env_map = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        )
+        json.dump(test_config, cls.temp_env_map)
+        cls.temp_env_map.close()
 
         import importlib
         import server.server
@@ -495,6 +503,7 @@ exit 0
         cls.env["MCPORTER_PROXY_PORT"] = str(SERVER_PORT_DOWNLOAD)
         cls.env["MCPORTER_PROXY_ALLOWED_TOOLS"] = "test_tool_*"
         cls.env["MCPORTER_PROXY_LOG_LEVEL"] = "WARNING"
+        cls.env["MCP_ENV_MAP_PATH"] = cls.temp_env_map.name
         cls.server_process = subprocess.Popen(
             [sys.executable, SERVER_SCRIPT],
             env=cls.env,
@@ -510,8 +519,7 @@ exit 0
         os.unlink(cls.mock_mcporter_path)
         os.unlink(cls.mock_gloves_path)
         os.rmdir(cls.mock_dir)
-        with open(ENV_MAP_PATH, "w") as f:
-            f.write(cls.original_env_map)
+        os.unlink(cls.temp_env_map.name)
         import importlib
         import server.server
 
@@ -621,16 +629,42 @@ exit 0
         )
         conn.close()
 
+    def test_download_atlassian_attachment(self):
+        conn = HTTPConnection("localhost", SERVER_PORT_DOWNLOAD, timeout=3)
+        body = json.dumps(
+            {"mcptype": "atlassian", "args": {"attachment_id": "test-attachment-123"}}
+        )
+        conn.request(
+            "POST",
+            "/download-attachment",
+            body=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-MCP-Auth-Key": "agent-key",
+            },
+        )
+        resp = conn.getresponse()
+        response_body = resp.read()
+        print(
+            f"DEBUG: Response status {resp.status}, body: {response_body.decode('utf-8', errors='replace')[:500]}"
+        )
+        self.assertEqual(
+            resp.status,
+            200,
+            f"Expected 200, got {resp.status}: {response_body.decode('utf-8', errors='replace')[:200]}",
+        )
+        conn.close()
+
 
 class TestDownloadAttachmentMocked(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(ENV_MAP_PATH, "r") as f:
-            cls.original_env_map = f.read()
-
         simple_config = {"github": ["GITHUB_TOKEN"], "gitlab": ["GITLAB_TOKEN"]}
-        with open(ENV_MAP_PATH, "w") as f:
-            json.dump(simple_config, f)
+        cls.temp_env_map = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        )
+        json.dump(simple_config, cls.temp_env_map)
+        cls.temp_env_map.close()
 
         import importlib
         import server.server
@@ -675,6 +709,7 @@ exit 0
         cls.env["MCPORTER_PROXY_PORT"] = str(SERVER_PORT)
         cls.env["MCPORTER_PROXY_ALLOWED_TOOLS"] = "test_tool_*"
         cls.env["MCPORTER_PROXY_LOG_LEVEL"] = "WARNING"
+        cls.env["MCP_ENV_MAP_PATH"] = cls.temp_env_map.name
         cls.server_process = subprocess.Popen(
             [sys.executable, SERVER_SCRIPT],
             env=cls.env,
@@ -690,8 +725,7 @@ exit 0
         os.unlink(cls.mock_mcporter_path)
         os.unlink(cls.mock_gloves_path)
         os.rmdir(cls.mock_dir)
-        with open(ENV_MAP_PATH, "w") as f:
-            f.write(cls.original_env_map)
+        os.unlink(cls.temp_env_map.name)
         import importlib
         import server.server
 
