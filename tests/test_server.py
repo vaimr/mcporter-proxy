@@ -1078,5 +1078,197 @@ class TestSchemaEndpoint(unittest.TestCase):
         self.assertEqual(mcptype_const, {"const": "gitlab"})
 
 
+class TestInjectAttachmentTools(unittest.TestCase):
+    def test_inject_to_list_mode(self):
+        from server.server import MCPorterProxyHandler
+
+        data = {
+            "mode": "list",
+            "servers": [
+                {"name": "github", "tools": [{"name": "list_repos"}]},
+                {"name": "gitlab", "tools": []},
+            ],
+        }
+        MCPorterProxyHandler()._inject_attachment_tools(data)
+        github_tools = data["servers"][0]["tools"]
+        self.assertTrue(
+            any(t["name"] == "github.attachment_download" for t in github_tools)
+        )
+        self.assertTrue(
+            any(t["name"] == "github.attachment_upload" for t in github_tools)
+        )
+
+    def test_inject_to_server_mode(self):
+        from server.server import MCPorterProxyHandler
+
+        data = {"mode": "server", "name": "github", "tools": [{"name": "list_repos"}]}
+        MCPorterProxyHandler()._inject_attachment_tools(data)
+        self.assertTrue(
+            any(t["name"] == "github.attachment_download" for t in data["tools"])
+        )
+
+    def test_inject_no_name_server(self):
+        from server.server import MCPorterProxyHandler
+
+        data = {"mode": "server", "tools": []}
+        MCPorterProxyHandler()._inject_attachment_tools(data)
+        self.assertEqual(data["tools"], [])
+
+    def test_inject_non_dict_data(self):
+        from server.server import MCPorterProxyHandler
+
+        data = ["not", "a", "dict"]
+        MCPorterProxyHandler()._inject_attachment_tools(data)
+
+    def test_inject_unknown_mcptype_no_attachments(self):
+        from server.server import MCPorterProxyHandler
+
+        data = {"mode": "server", "name": "nonexistent", "tools": []}
+        MCPorterProxyHandler()._inject_attachment_tools(data)
+        self.assertEqual(len(data["tools"]), 0)
+
+    def test_preserve_existing_tools(self):
+        from server.server import MCPorterProxyHandler
+
+        data = {
+            "mode": "server",
+            "name": "github",
+            "tools": [{"name": "list_repos"}, {"name": "create_gist"}],
+        }
+        MCPorterProxyHandler()._inject_attachment_tools(data)
+        self.assertEqual(len(data["tools"]), 4)
+        tool_names = [t["name"] for t in data["tools"]]
+        self.assertIn("list_repos", tool_names)
+        self.assertIn("create_gist", tool_names)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mock_dir = tempfile.mkdtemp()
+        cls.mock_mcporter_path = os.path.join(cls.mock_dir, "mcporter")
+        with open(cls.mock_mcporter_path, "w") as f:
+            f.write("""#!/bin/bash
+if [[ "$*" == *"json"* ]]; then
+    if [[ "$*" == *"github"* ]]; then
+        echo '{"mode": "server", "name": "github", "status": "ok", "durationMs": 50, "transport": "HTTP http://github:3000/mcp", "source": {"kind": "local"}, "tools": [{"name": "list_repos", "description": "List repositories", "inputSchema": {"type": "object"}}]}'
+    else
+        echo '{"mode": "list", "counts": {"ok": 2, "auth": 0, "offline": 0, "http": 0, "error": 0}, "servers": [{"name": "github", "status": "ok", "durationMs": 50, "transport": "HTTP http://github:3000/mcp", "source": {"kind": "local"}, "tools": [{"name": "list_repos", "description": "List repos", "inputSchema": {"type": "object"}}]}, {"name": "gitlab", "status": "ok", "durationMs": 40, "transport": "HTTP http://gitlab:3333/mcp", "source": {"kind": "local"}, "tools": []}]}'
+    fi
+else
+    echo "mcporter 0.9.0 — Listing 2 server(s)"
+    echo "- github (12 tools, 0.1s)"
+    echo "- gitlab (8 tools, 0.1s)"
+    echo "✔ Listed 2 servers (2 healthy; 0 errors)."
+fi
+exit 0
+""")
+        os.chmod(cls.mock_mcporter_path, 0o755)
+
+        cls.mock_gloves_path = os.path.join(cls.mock_dir, "gloves")
+        with open(cls.mock_gloves_path, "w") as f:
+            f.write("""#!/bin/bash
+exec "$@"
+exit 0
+""")
+        os.chmod(cls.mock_gloves_path, 0o755)
+
+        cls.env = os.environ.copy()
+        cls.env["PATH"] = cls.mock_dir + ":" + os.environ.get("PATH", "")
+        cls.env["MCPORTER_PROXY_PORT"] = str(SERVER_PORT)
+        cls.env["MCPORTER_PROXY_LOG_LEVEL"] = "WARNING"
+        cls.server_process = subprocess.Popen(
+            [sys.executable, SERVER_SCRIPT],
+            env=cls.env,
+        )
+        time.sleep(0.5)
+        if cls.server_process.poll() is not None:
+            raise RuntimeError("Server failed to start")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server_process.terminate()
+        cls.server_process.wait()
+        os.unlink(cls.mock_mcporter_path)
+        os.unlink(cls.mock_gloves_path)
+        os.rmdir(cls.mock_dir)
+
+    def test_list_requires_auth(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request("GET", "/list")
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 401)
+        conn.close()
+
+    def test_list_invalid_auth_key_format(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request("GET", "/list", headers={"X-MCP-Auth-Key": "invalid_no_separator"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 401)
+        conn.close()
+
+    def test_list_text_output(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request("GET", "/list", headers={"X-MCP-Auth-Key": "agent-key"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        content_type = resp.getheader("Content-Type", "")
+        self.assertIn("text/plain", content_type)
+        body = resp.read().decode()
+        self.assertIn("mcporter", body)
+        self.assertIn("github", body)
+        conn.close()
+
+    def test_list_json_output(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request("GET", "/list?json=true", headers={"X-MCP-Auth-Key": "agent-key"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        content_type = resp.getheader("Content-Type", "")
+        self.assertIn("application/json", content_type)
+        body = json.loads(resp.read().decode())
+        self.assertEqual(body.get("mode"), "list")
+        self.assertIn("servers", body)
+        self.assertEqual(len(body["servers"]), 2)
+        conn.close()
+
+    def test_list_with_name_json(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET", "/list/github?json=true", headers={"X-MCP-Auth-Key": "agent-key"}
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        self.assertEqual(body.get("mode"), "server")
+        self.assertEqual(body.get("name"), "github")
+        conn.close()
+
+    def test_list_injects_attachment_tools(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request("GET", "/list?json=true", headers={"X-MCP-Auth-Key": "agent-key"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        github_server = next(
+            (s for s in body.get("servers", []) if s["name"] == "github"), None
+        )
+        self.assertIsNotNone(github_server)
+        tool_names = [t["name"] for t in github_server.get("tools", [])]
+        self.assertIn("github.attachment_download", tool_names)
+        self.assertIn("github.attachment_upload", tool_names)
+
+    def test_list_with_schema_flag(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET",
+            "/list/github?json=true&schema=true",
+            headers={"X-MCP-Auth-Key": "agent-key"},
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        self.assertEqual(body.get("name"), "github")
+        conn.close()

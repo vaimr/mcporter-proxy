@@ -53,17 +53,20 @@ curl http://localhost:8080/health
 
 Returns `{"status": "ok"}` for load balancer health checks.
 
-### Schema Endpoints
+### List Endpoints
 
 ```bash
-# List all available mcptypes
-curl -H "X-MCP-Auth-Key: <key>" http://localhost:8080/schema
+# List all servers (text output)
+curl -H "X-MCP-Auth-Key: <key>" http://localhost:8080/list
 
-# Get schema for specific mcptype
-curl -H "X-MCP-Auth-Key: <key>" http://localhost:8080/schema/github
+# List all servers (JSON output)
+curl -H "X-MCP-Auth-Key: <key>" "http://localhost:8080/list?json=true"
+
+# List specific server with schema
+curl -H "X-MCP-Auth-Key: <key>" "http://localhost:8080/list/github?json=true&schema=true"
 ```
 
-Returns list of mcptypes or full schema with tools and attachment endpoints.
+The `/list` endpoint wraps `mcporter list` command with support for `--json` and `--schema` flags. When JSON output is requested, attachment download/upload tools from config are injected into each server's tools array.
 
 ## Environment Variables
 
@@ -179,9 +182,10 @@ mcporter-proxy download github owner=octocat repo=hello-world asset_id=123456 --
 mcporter-proxy download confluence page_id=123456 filename=doc.pdf --output document.pdf
 ```
 
-### 4. List Allowed Tools
+### 4. List Servers and Their Tools
 ```bash
-MCPORTER_PROXY_ALLOWED_TOOLS="github.*,jira.*" mcporter-proxy call github.list_repos
+mcporter-proxy list
+mcporter-proxy list github --json --schema
 ```
 
 ## Adding New MCP Types

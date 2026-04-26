@@ -922,6 +922,13 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
+        elif self.path == "/list" or self.path.startswith("/list?"):
+            self._handle_list(query_string=self.path[len("/list") :])
+        elif self.path.startswith("/list/"):
+            path_parts = self.path[6:].split("?", 1)
+            name = path_parts[0]
+            query_string = path_parts[1] if len(path_parts) > 1 else ""
+            self._handle_list(name=name, query_string=query_string)
         elif self.path == "/schema":
             self._handle_schema_list()
         elif self.path.startswith("/schema/"):
@@ -993,6 +1000,120 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(response).encode("utf-8"))
+
+    def _handle_list(self, name: Optional[str] = None, query_string: str = ""):
+        """Handle GET /list or /list/<name> with optional json and schema flags."""
+        auth_key = self.headers.get("X-MCP-Auth-Key")
+        if not auth_key:
+            self.send_error(401, "Authentication required")
+            return
+        auth_parts = parse_auth_key(auth_key)
+        if not auth_parts:
+            self.send_error(401, "Invalid auth key format")
+            return
+
+        # Parse query params
+        params: Dict[str, bool] = {}
+        if query_string:
+            for pair in query_string.split("&"):
+                if "=" in pair:
+                    key = pair.split("=")[0]
+                    params[key] = pair.split("=")[1] == "true" if "=" in pair else True
+                elif pair:
+                    params[pair] = True
+
+        use_json = "json" in params
+        use_schema = "schema" in params
+
+        # Build mcporter command
+        cmd = ["mcporter", "list"]
+        if name:
+            cmd.append(name)
+        if use_json:
+            cmd.append("--json")
+        if use_schema:
+            cmd.append("--schema")
+
+        logger.debug("Executing mcporter list: %s", " ".join(cmd))
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except FileNotFoundError:
+            self.send_error(500, "mcporter not found")
+            return
+        except subprocess.TimeoutExpired:
+            self.send_error(504, "mcporter timed out")
+            return
+
+        if result.returncode != 0:
+            logger.warning("mcporter list failed: %s", result.stderr)
+            # Fall through to return output anyway
+
+        if use_json:
+            try:
+                data = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                self.send_error(
+                    500, f"Invalid JSON from mcporter: {result.stderr[:200]}"
+                )
+                return
+
+            # Inject attachment tools into each server's tools array
+            self._inject_attachment_tools(data)
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode("utf-8"))
+        else:
+            # Plain text passthrough
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(result.stdout.encode("utf-8"))
+
+    def _inject_attachment_tools(self, data: Any) -> None:
+        """Inject attachment_download/upload as meta-tools into server data."""
+        if not isinstance(data, dict):
+            return
+
+        # Handle single server mode: {"mode": "server", "name": "...", "tools": [...]}
+        if data.get("mode") == "server":
+            self._add_attachment_tools_to_server(data)
+            return
+
+        # Handle list mode: {"mode": "list", "servers": [...]}
+        servers = data.get("servers", [])
+        if isinstance(servers, list):
+            for server in servers:
+                self._add_attachment_tools_to_server(server)
+
+    def _add_attachment_tools_to_server(self, server: Dict[str, Any]) -> None:
+        """Add attachment_download and attachment_upload tools to a server's tools array."""
+        name = server.get("name")
+        if not name:
+            return
+
+        download_config = get_attachment_download_config(name)
+        upload_config = get_attachment_upload_config(name)
+
+        tools = server.get("tools", [])
+
+        if download_config:
+            download_tool = build_attachment_schema(name, download_config, "download")
+            tools.append(download_tool)
+
+        if upload_config:
+            upload_tool = build_attachment_schema(name, upload_config, "upload")
+            tools.append(upload_tool)
+
+        server["tools"] = tools
 
     def do_POST(self):
         if self.path == "/call":

@@ -256,19 +256,22 @@ function parseUploadArgs(args) {
   return { mcptype, args: uploadArgs, filePath, contentType };
 }
 
-function parseSchemaArgs(args) {
-  const mcptype = args.length > 0 ? args[0] : null;
+function parseListArgs(args) {
+  const name = args.length > 0 ? args[0] : null;
   let outputFormat = "text";
+  let wantSchema = false;
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--json") {
       outputFormat = "json";
+    } else if (arg === "--schema") {
+      wantSchema = true;
     }
   }
 
-  log("DEBUG", `Parsed schema: mcptype=${mcptype}, format=${outputFormat}`);
-  return { mcptype, outputFormat };
+  log("DEBUG", `Parsed list: name=${name}, format=${outputFormat}, schema=${wantSchema}`);
+  return { name, outputFormat, wantSchema };
 }
 
 async function proxyUploadRequest(mcptype, args, filePath, contentType) {
@@ -365,17 +368,25 @@ async function proxyUploadRequest(mcptype, args, filePath, contentType) {
   });
 }
 
-async function proxySchemaRequest(mcptype, outputFormat) {
+async function proxyListRequest(name, outputFormat, wantSchema) {
   if (!AUTH_KEY) {
     console.error("MCPORTER_PROXY_AUTH_KEY is not set");
     process.exit(1);
   }
 
-  const schemaPath = mcptype
-    ? SCHEMA_MCPTYPE_PATH_PREFIX + mcptype
-    : SCHEMA_LIST_PATH;
+  let listPath = "/list";
+  if (name) {
+    listPath = `/list/${name}`;
+  }
 
-  const url = new URL(schemaPath, PROXY_URL);
+  const queryParams = [];
+  if (outputFormat === "json") queryParams.push("json=true");
+  if (wantSchema) queryParams.push("schema=true");
+  if (queryParams.length > 0) {
+    listPath += "?" + queryParams.join("&");
+  }
+
+  const url = new URL(listPath, PROXY_URL);
   const client = url.protocol === "https:" ? https : http;
 
   log("DEBUG", `Proxy URL: ${url.href}`);
@@ -424,47 +435,11 @@ async function proxySchemaRequest(mcptype, outputFormat) {
             console.log(data);
           }
         } else {
-          if (!mcptype) {
-            const json = JSON.parse(data);
-            if (json.mcptypes && Array.isArray(json.mcptypes)) {
-              console.log("Available mcptypes:");
-              for (const t of json.mcptypes) {
-                console.log(`  - ${t}`);
-              }
-            } else {
-              console.log(data);
-            }
-          } else {
-            const json = JSON.parse(data);
-            console.log(`Schema for ${json.name}:`);
-            if (json.tools && Array.isArray(json.tools)) {
-              console.log("\nTools:");
-              for (const tool of json.tools) {
-                console.log(`  ${tool.name}`);
-                if (tool.description) {
-                  console.log(`    ${tool.description.split('\n')[0]}`);
-                }
-              }
-            }
-            if (json.attachment_download) {
-              console.log("\nAttachment Download:");
-              console.log(`  ${json.attachment_download.name}`);
-              if (json.attachment_download.description) {
-                console.log(`    ${json.attachment_download.description.split('\n')[0]}`);
-              }
-            }
-            if (json.attachment_upload) {
-              console.log("\nAttachment Upload:");
-              console.log(`  ${json.attachment_upload.name}`);
-              if (json.attachment_upload.description) {
-                console.log(`    ${json.attachment_upload.description.split('\n')[0]}`);
-              }
-            }
-          }
+          console.log(data);
         }
         process.exit(0);
       } else {
-        const errorMsg = `Schema request failed: ${res.statusCode} ${res.statusMessage}`;
+        const errorMsg = `List request failed: ${res.statusCode} ${res.statusMessage}`;
         log("ERROR", `${errorMsg} | Response: ${data ? data.substring(0, 200) : 'N/A'}`);
         if (attempt === MAX_RETRIES) {
           console.error(errorMsg);
@@ -508,9 +483,9 @@ async function main() {
     const { mcptype, args: uploadArgs, filePath, contentType } = parseUploadArgs(args.slice(1));
     await proxyUploadRequest(mcptype, uploadArgs, filePath, contentType);
     process.exit(0);
-  } else if (command === "schema") {
-    const { mcptype, outputFormat } = parseSchemaArgs(args.slice(1));
-    await proxySchemaRequest(mcptype, outputFormat);
+  } else if (command === "list") {
+    const { name, outputFormat, wantSchema } = parseListArgs(args.slice(1));
+    await proxyListRequest(name, outputFormat, wantSchema);
   } else if (command === "help") {
     console.log(`mcporter-proxy - MCP Proxy Client
 
@@ -518,23 +493,24 @@ Usage:
   mcporter-proxy call <tool> [args]
   mcporter-proxy download <platform> [args] [--output <path>]
   mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]
-  mcporter-proxy schema [mcptype] [--json]
+  mcporter-proxy list [name] [--json] [--schema]
   mcporter-proxy help
 
 Commands:
   call      Execute an MCP tool
   download Download an attachment
   upload    Upload an attachment
-  schema    Show schema for mcptypes (default: list all; --json: raw JSON)
+  list      List servers (mcporter list passthrough with --json and --schema support)
 
 Examples:
   mcporter-proxy call github.list_repos visibility=private
   mcporter-proxy download github owner=octocat repo=hello-world asset_id=123 --output release.zip
   mcporter-proxy upload confluence page_id=123456 name=report.pdf --file ./report.pdf
   mcporter-proxy upload jira issue_key=PROJ-123 name=attachment.zip --file ./attachment.zip
-  mcporter-proxy schema
-  mcporter-proxy schema github
-  mcporter-proxy schema github --json
+  mcporter-proxy list
+  mcporter-proxy list github
+  mcporter-proxy list --json
+  mcporter-proxy list github --json --schema
 `);
     process.exit(0);
   } else {
