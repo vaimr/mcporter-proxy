@@ -360,7 +360,7 @@ exit 0
         sys.version_info >= (3, 14),
         "HTTPSConnection tuple timeout broken in Python 3.14+",
     )
-    def test_download_success_response_format(self):
+    def test_download_success_raw_content_no_multipart_boundary(self):
         conn = HTTPConnection("localhost", SERVER_PORT_DOWNLOAD)
         body = json.dumps({"mcptype": "github", "args": {"asset_id": "123"}})
         conn.request(
@@ -384,7 +384,17 @@ exit 0
             f"Expected 200, got {resp.status}: {response_body.decode('utf-8', errors='replace')[:200]}",
         )
         content_type = resp.getheader("Content-Type", "")
-        self.assertIn("multipart/form-data", content_type)
+        content_disposition = resp.getheader("Content-Disposition", "")
+        self.assertIn("attachment", content_disposition.lower())
+        self.assertIn('filename="', content_disposition)
+        self.assertNotIn("multipart/form-data", content_type)
+        self.assertNotIn(
+            "--simpleboundary", response_body.decode("utf-8", errors="replace")
+        )
+        self.assertNotIn(
+            "Content-Disposition: form-data",
+            response_body.decode("utf-8", errors="replace"),
+        )
         conn.close()
 
 

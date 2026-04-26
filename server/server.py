@@ -33,6 +33,25 @@ logging.basicConfig(
 logger = logging.getLogger("mcporter-proxy")
 
 
+def mask_token(token: Optional[str]) -> str:
+    if not token:
+        return "<none>"
+    if len(token) <= 8:
+        return "*" * len(token)
+    return f"{token[:4]}...{token[-4:]}"
+
+
+def mask_headers_for_log(headers: Dict[str, str]) -> Dict[str, str]:
+    masked = {}
+    sensitive = {"authorization", "cookie", "x-auth-token", "x-api-key"}
+    for key, value in headers.items():
+        if key.lower() in sensitive:
+            masked[key] = mask_token(value)
+        else:
+            masked[key] = value
+    return masked
+
+
 class MCPToolError(Exception):
     """Raised when MCP tool execution fails or returns invalid response."""
 
@@ -291,10 +310,25 @@ def download_via_rest(
 
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
 
+    logger.debug(
+        "download_via_rest: method=%s, url=%s",
+        method,
+        url,
+    )
+    logger.debug("download_via_rest: headers=%s", mask_headers_for_log(headers))
+    logger.debug("download_via_rest: body=%s", body)
+
     try:
         response = urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT)
     except urllib.error.HTTPError as e:
+        logger.debug("download_via_rest: HTTPError %s - %s", e.code, e.reason)
         response = e
+
+    logger.debug(
+        "download_via_rest: response status=%s, headers=%s",
+        response.status,
+        mask_headers_for_log(dict(response.headers)),
+    )
 
     content_type = response.headers.get("Content-Type", "application/octet-stream")
     content_disposition = response.headers.get("Content-Disposition", "")
@@ -857,6 +891,17 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         if isinstance(env_vars, list) and len(env_vars) > 0 and token:
             extra_secrets[env_vars[0]] = token
 
+        logger.debug(
+            "_handle_download_attachment: mcptype=%s, agent_id=%s, download_type=%s, "
+            "token=%s, extra_secrets_keys=%s, env_vars=%s",
+            mcptype,
+            agent_id,
+            download_type,
+            mask_token(token),
+            list(extra_secrets.keys()),
+            env_vars,
+        )
+
         try:
             if download_type == "rest_api":
                 stream, filename, content_type = download_via_rest(
@@ -877,13 +922,14 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 return
 
             self.send_response(200)
+            self.send_header("Content-Type", content_type)
             self.send_header(
-                "Content-Type", f"multipart/form-data; boundary=simpleboundary"
+                "Content-Disposition", f'attachment; filename="{filename}"'
             )
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
 
-            for chunk in generate_multipart(stream, filename, content_type):
+            for chunk in stream:
                 self.wfile.write(chunk)
 
         except (ConnectionResetError, BrokenPipeError, OSError, MCPToolError) as e:
