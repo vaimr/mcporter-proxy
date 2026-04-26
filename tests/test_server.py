@@ -658,6 +658,123 @@ exit 0
         conn.close()
 
 
+class TestDownloadViaRest(unittest.TestCase):
+    """Test download_via_rest function with HTTP redirect handling."""
+
+    def test_download_via_rest_no_redirect(self):
+        from server.server import download_via_rest
+        from unittest.mock import patch, MagicMock
+
+        config = {
+            "method": "GET",
+            "url_template": "https://example.com/file/{id}",
+            "headers": {"Authorization": "Bearer {token}"},
+        }
+        args = {"id": "123", "filename": "test.txt"}
+
+        mock_response = MagicMock()
+        mock_response.headers = {
+            "Content-Type": "text/plain",
+            "Content-Disposition": 'attachment; filename="test.txt"',
+        }
+        mock_response.read = MagicMock(side_effect=[b"file content", b""])
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            gen, filename, content_type = download_via_rest(
+                config, args, "token123", {}
+            )
+
+            chunks = list(gen)
+            self.assertEqual(b"".join(chunks), b"file content")
+            self.assertEqual(filename, "test.txt")
+            self.assertEqual(content_type, "text/plain")
+
+    def test_download_via_rest_with_redirect(self):
+        from server.server import download_via_rest
+        from unittest.mock import patch, MagicMock
+
+        config = {
+            "method": "GET",
+            "url_template": "http://example.com/file/{id}",
+            "headers": {"Authorization": "Bearer {token}"},
+        }
+        args = {
+            "id": "123"
+        }  # no filename in args, should fallback to Content-Disposition
+
+        mock_response = MagicMock()
+        mock_response.headers = {
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": 'attachment; filename="downloaded.txt"',
+        }
+        mock_response.read = MagicMock(side_effect=[b"redirected content", b""])
+
+        mock_request = MagicMock()
+        mock_request.get_full_url = MagicMock(
+            return_value="https://example.com/file/123"
+        )
+
+        with patch(
+            "urllib.request.urlopen", return_value=mock_response
+        ) as mock_urlopen:
+            gen, filename, content_type = download_via_rest(
+                config, args, "token123", {}
+            )
+
+            chunks = list(gen)
+            self.assertEqual(b"".join(chunks), b"redirected content")
+            self.assertEqual(filename, "downloaded.txt")
+
+    def test_download_via_rest_filename_from_url(self):
+        from server.server import download_via_rest
+        from unittest.mock import patch, MagicMock
+
+        config = {
+            "method": "GET",
+            "url_template": "https://example.com/downloads/report.pdf",
+            "headers": {},
+        }
+        args = {}
+
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Type": "application/pdf"}
+        mock_response.read = MagicMock(side_effect=[b"PDF content", b""])
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            gen, filename, content_type = download_via_rest(config, args, None, {})
+
+            chunks = list(gen)
+            self.assertEqual(filename, "report.pdf")
+
+    def test_download_via_rest_post_with_body(self):
+        from server.server import download_via_rest
+        from unittest.mock import patch, MagicMock
+
+        config = {
+            "method": "POST",
+            "url_template": "https://example.com/api/download",
+            "headers": {"X-Api-Key": "secret"},
+            "body_template": '{"file_id": "{id}"}',
+        }
+        args = {"id": "456"}
+
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Type": "application/octet-stream"}
+        mock_response.read = MagicMock(side_effect=[b"post response", b""])
+
+        with patch(
+            "urllib.request.urlopen", return_value=mock_response
+        ) as mock_urlopen:
+            gen, filename, content_type = download_via_rest(config, args, None, {})
+
+            chunks = list(gen)
+            self.assertEqual(b"".join(chunks), b"post response")
+            mock_urlopen.assert_called_once()
+            call_args = mock_urlopen.call_args
+            request = call_args[0][0]
+            self.assertEqual(request.get_method(), "POST")
+
+
 class TestConfigValidation(unittest.TestCase):
     def test_invalid_type_validation(self):
         from server.server import validate_config

@@ -284,31 +284,24 @@ def download_via_rest(
         if "Content-Type" not in headers:
             headers["Content-Type"] = "application/json"
 
-    parsed_url = urllib.parse.urlparse(url)
-    conn = http.client.HTTPSConnection(
-        parsed_url.netloc,
-        timeout=UPSTREAM_TIMEOUT,
-    )
-    conn.connect()
-    conn.putrequest(method, parsed_url.path, skip_host=True)
-    if parsed_url.query:
-        conn.putheader("X-Original-URI", f"{parsed_url.path}?{parsed_url.query}")
-    for k, v in headers.items():
-        conn.putheader(k, v)
-    if body:
-        conn.endheaders(body)
-    else:
-        conn.endheaders()
-    response = conn.getresponse()
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
 
-    content_type = response.getheader("Content-Type", "application/octet-stream")
-    content_disposition = response.getheader("Content-Disposition", "")
+    try:
+        response = urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT)
+    except urllib.error.HTTPError as e:
+        response = e
+
+    content_type = response.headers.get("Content-Type", "application/octet-stream")
+    content_disposition = response.headers.get("Content-Disposition", "")
     filename = args.get("filename", "")
     if not filename and content_disposition:
         if "filename=" in content_disposition:
             filename = content_disposition.split("filename=")[1].strip().strip('"')
     if not filename:
-        filename = parsed_url.path.split("/")[-1] or "download"
+        filename = (
+            urllib.parse.unquote(urllib.parse.urlparse(url).path.split("/")[-1])
+            or "download"
+        )
 
     def gen():
         while True:
@@ -316,7 +309,7 @@ def download_via_rest(
             if not chunk:
                 break
             yield chunk
-        conn.close()
+        response.close()
 
     return gen(), filename, content_type
 
