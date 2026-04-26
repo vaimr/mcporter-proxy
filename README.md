@@ -165,7 +165,7 @@ Response:
 
 **Endpoint:** `GET /list`
 
-Returns list of servers with their tools. Wraps `mcporter list` command with token injection from gloves.
+Returns list of servers with their tools. Wraps `mcporter list` command with token injection.
 
 **Query parameters:**
 - `json=true` - Returns JSON output (parsed from mcporter output)

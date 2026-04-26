@@ -11,8 +11,7 @@ const PROXY_URL = process.env.MCPORTER_PROXY_URL || "http://host.docker.internal
 const CALL_PATH = "/call";
 const DOWNLOAD_PATH = "/download-attachment";
 const UPLOAD_PATH = "/upload-attachment";
-const SCHEMA_LIST_PATH = "/schema";
-const SCHEMA_MCPTYPE_PATH_PREFIX = "/schema/";
+const LIST_PATH = "/list";
 const TIMEOUT_MS = parseInt(process.env.MCPORTER_PROXY_TIMEOUT || "120000", 10);
 const MAX_RETRIES = parseInt(process.env.MCPORTER_PROXY_RETRIES || "2", 10);
 const RETRY_DELAY_MS = parseInt(process.env.MCPORTER_PROXY_RETRY_DELAY || "1000", 10);
@@ -257,16 +256,19 @@ function parseUploadArgs(args) {
 }
 
 function parseListArgs(args) {
-  const name = args.length > 0 ? args[0] : null;
+  const FLAGS = ["--json", "--schema"];
+  let name = null;
   let outputFormat = "text";
   let wantSchema = false;
 
-  for (let i = 1; i < args.length; i++) {
+  for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--json") {
       outputFormat = "json";
     } else if (arg === "--schema") {
       wantSchema = true;
+    } else if (!arg.startsWith("--")) {
+      name = arg;
     }
   }
 
@@ -374,9 +376,9 @@ async function proxyListRequest(name, outputFormat, wantSchema) {
     process.exit(1);
   }
 
-  let listPath = "/list";
-  if (name) {
-    listPath = `/list/${name}`;
+  let listPath = LIST_PATH;
+  if (name && !name.startsWith("--")) {
+    listPath = `${LIST_PATH}/${name}`;
   }
 
   const queryParams = [];
@@ -521,7 +523,7 @@ Examples:
 }
 
 // Export for testing
-module.exports = { parseDownloadArgs, parseUploadArgs };
+module.exports = { parseDownloadArgs, parseUploadArgs, parseListArgs };
 
 // Only run main when executed directly, not when imported
 if (require.main === module) {

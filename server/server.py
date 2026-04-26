@@ -1012,6 +1012,11 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_error(401, "Invalid auth key format")
             return
 
+        agent_id, agent_key = auth_parts
+        sep = (
+            SECRETS_SEPARATOR if SECRETS_SEPARATOR else get_auth_key_separator(auth_key)
+        )
+
         # Parse query params
         params: Dict[str, bool] = {}
         if query_string:
@@ -1034,18 +1039,49 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         if use_schema:
             cmd.append("--schema")
 
-        logger.debug("Executing mcporter list: %s", " ".join(cmd))
+        # Build env flags for gloves
+        # When name is specified, only inject tokens for that mcptype
+        # When name is None, inject tokens for ALL configured mcptypes
+        env_flags = []
+        if name:
+            mcptypes_to_inject = [name]
+        else:
+            mcptypes_to_inject = list(MCP_ENV_MAP.keys())
+
+        for mcptype in mcptypes_to_inject:
+            env_vars = get_env_vars_for_mcptype(mcptype)
+            if isinstance(env_vars, str):
+                env_vars = [env_vars]
+            for i, env_var in enumerate(env_vars):
+                if i == 0:
+                    secrets_key = (
+                        f"{SECRETS_PREFIX}{sep}{agent_id}{sep}{mcptype}{sep}{agent_key}"
+                    )
+                else:
+                    secrets_key = f"{SECRETS_PREFIX}{sep}{agent_id}{sep}{mcptype}{sep}{agent_key}{sep}{i}"
+                env_flags.extend(["--env", f"{env_var}=gloves://{secrets_key}"])
+
+        # Wrap command with gloves if we have env flags
+        if env_flags:
+            exec_cmd = ["gloves", "--agent", agent_id, "run", *env_flags, "--", *cmd]
+        else:
+            exec_cmd = cmd
+
+        logger.debug("Executing mcporter list: %s", " ".join(exec_cmd))
 
         try:
             result = subprocess.run(
-                cmd,
+                exec_cmd,
                 capture_output=True,
                 text=True,
                 timeout=30,
                 check=False,
             )
-        except FileNotFoundError:
-            self.send_error(500, "mcporter not found")
+        except FileNotFoundError as e:
+            if e.filename == "gloves":
+                self.send_error(500, "gloves not found")
+            else:
+                self.send_error(500, "mcporter not found")
             return
         except subprocess.TimeoutExpired:
             self.send_error(504, "mcporter timed out")

@@ -72,9 +72,9 @@ assert.strictEqual(listResult.outputFormat, "text", "Should default to text form
 console.log("✅ parseListArgs with name only");
 
 listResult = parseListArgs(["--json"]);
-assert.strictEqual(listResult.name, "--json", "Should treat --json as name when no positional args");
-assert.strictEqual(listResult.outputFormat, "text", "Should default to text when flags not recognized as such");
-console.log("✅ parseListArgs with --json as first arg");
+assert.strictEqual(listResult.name, null, "Should have null name when only flags provided");
+assert.strictEqual(listResult.outputFormat, "json", "Should parse --json flag");
+console.log("✅ parseListArgs with --json only");
 
 listResult = parseListArgs(["github", "--json"]);
 assert.strictEqual(listResult.name, "github", "Should parse name with --json");
@@ -82,8 +82,9 @@ assert.strictEqual(listResult.outputFormat, "json", "Should parse --json");
 console.log("✅ parseListArgs with name and --json");
 
 listResult = parseListArgs(["--schema"]);
-assert.strictEqual(listResult.name, "--schema", "Should treat --schema as name when no positional args");
-console.log("✅ parseListArgs with --schema as first arg");
+assert.strictEqual(listResult.name, null, "Should have null name when only flags provided");
+assert.strictEqual(listResult.wantSchema, true, "Should parse --schema flag");
+console.log("✅ parseListArgs with --schema only");
 
 listResult = parseListArgs(["github", "--json", "--schema"]);
 assert.strictEqual(listResult.name, "github", "Should parse name");
