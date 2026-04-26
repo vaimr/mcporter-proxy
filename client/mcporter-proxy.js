@@ -276,8 +276,7 @@ function parseListArgs(args) {
   }
 
   if (outputFormat === "json" && wantSchema) {
-    console.error("Error: --json and --schema cannot be used together");
-    process.exit(1);
+    throw new Error("Error: --json and --schema cannot be used together");
   }
 
   log("DEBUG", `Parsed list: name=${name}, format=${outputFormat}, schema=${wantSchema}, allParameters=${wantAllParameters}`);
