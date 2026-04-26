@@ -82,5 +82,26 @@
         "X-Atlassian-Token": "no-check"
       }
     }
+  },
+  "atlassian": {
+    "env": ["ATLASSIAN_API_TOKEN"],
+    "attachment_download": {
+      "type": "rest_api",
+      "method": "GET",
+      "url_template": "https://your-domain.atlassian.com/rest/api/3/attachment/{attachment_id}",
+      "headers": {
+        "Authorization": "Basic {basic_auth}",
+        "Accept": "application/octet-stream"
+      }
+    },
+    "attachment_upload": {
+      "type": "rest_api",
+      "method": "POST",
+      "url_template": "https://your-domain.atlassian.com/rest/api/3/issue/{issue_key}/attachments",
+      "headers": {
+        "Authorization": "Basic {basic_auth}",
+        "X-Atlassian-Token": "no-check"
+      }
+    }
   }
 }

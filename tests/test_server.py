@@ -1424,19 +1424,52 @@ class TestListEndpoint(unittest.TestCase):
                 + tools_json
                 + "}"
             )
-            list_response = '{"mode": "list", "counts": {"ok": 2, "auth": 0, "offline": 0, "http": 0, "error": 0}, "servers": [{"name": "github", "status": "ok", "durationMs": 50, "transport": "HTTP http://github:3000/mcp", "source": {"kind": "local"}, "tools": [{"name": "list_repos", "description": "List repositories", "inputSchema": {"type": "object"}}]}, {"name": "gitlab", "status": "ok", "durationMs": 40, "transport": "HTTP http://gitlab:3333/mcp", "source": {"kind": "local"}, "tools": []}]}'
+            atlassian_tools = [
+                {
+                    "name": "atlassian.confluence_delete_attachment",
+                    "description": "Delete attachment",
+                    "inputSchema": {"type": "object"},
+                },
+                {
+                    "name": "atlassian.confluence_get_page_images",
+                    "description": "Get page images",
+                    "inputSchema": {"type": "object"},
+                },
+                {
+                    "name": "atlassian.jira_search",
+                    "description": "Search Jira",
+                    "inputSchema": {"type": "object"},
+                },
+            ]
+            atlassian_tools_json = json.dumps(atlassian_tools)
+            atlassian_response = (
+                '{"mode": "server", "name": "atlassian", "status": "ok", "durationMs": 50, "transport": "HTTP http://atlassian:3333/mcp", "source": {"kind": "local"}, "tools": '
+                + atlassian_tools_json
+                + "}"
+            )
+            list_response = (
+                '{"mode": "list", "counts": {"ok": 3, "auth": 0, "offline": 0, "http": 0, "error": 0}, "servers": ['
+                + '{"name": "github", "status": "ok", "durationMs": 50, "transport": "HTTP http://github:3000/mcp", "source": {"kind": "local"}, "tools": [{"name": "list_repos", "description": "List repositories", "inputSchema": {"type": "object"}}]},'
+                + '{"name": "gitlab", "status": "ok", "durationMs": 40, "transport": "HTTP http://gitlab:3333/mcp", "source": {"kind": "local"}, "tools": []},'
+                + '{"name": "atlassian", "status": "ok", "durationMs": 40, "transport": "HTTP http://atlassian:3333/mcp", "source": {"kind": "local"}, "tools": '
+                + atlassian_tools_json
+                + "}]}"
+            )
             script = f"""#!/bin/bash
 if [[ "$*" == *"json"* ]]; then
     if [[ "$*" == *"github"* ]]; then
         echo '{github_response}'
+    elif [[ "$*" == *"atlassian"* ]]; then
+        echo '{atlassian_response}'
     else
         echo '{list_response}'
     fi
 else
-    echo "mcporter 0.9.0 — Listing 2 server(s)"
+    echo "mcporter 0.9.0 — Listing 3 server(s)"
     echo "- github (12 tools, 0.1s)"
     echo "- gitlab (8 tools, 0.1s)"
-    echo "✔ Listed 2 servers (2 healthy; 0 errors)."
+    echo "- atlassian (15 tools, 0.1s)"
+    echo "✔ Listed 3 servers (3 healthy; 0 errors)."
 fi
 exit 0
 """
