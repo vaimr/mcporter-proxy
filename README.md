@@ -163,6 +163,68 @@ Response:
 { "status": "ok" }
 ```
 
+**Endpoint:** `GET /schema`
+
+Returns list of all registered mcptypes. Requires `X-MCP-Auth-Key` header.
+
+Response:
+```json
+{
+  "mcptypes": ["github", "gitlab", "atlassian", "confluence", "jira", "cognee"]
+}
+```
+
+**Endpoint:** `GET /schema/<mcptype>`
+
+Returns full schema for a specific mcptype including MCP tools from `mcporter list <mcptype> --schema` and attachment endpoints as pseudo-tools. Requires `X-MCP-Auth-Key` header.
+
+Response:
+```json
+{
+  "name": "github",
+  "tools": [
+    {
+      "name": "github.list_repos",
+      "description": "Lists repositories for the authenticated user",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "visibility": {"type": "string", "enum": ["all", "public", "private"]}
+        }
+      }
+    }
+  ],
+  "attachment_download": {
+    "name": "github.attachment_download",
+    "description": "Download file attachment from platform",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mcptype": {"const": "github"},
+        "args": {
+          "type": "object",
+          "properties": {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "asset_id": {"type": "string"},
+            "filename": {"type": "string"}
+          }
+        }
+      }
+    },
+    "_proxy_endpoint": "POST /download-attachment",
+    "_proxy_direction": "download"
+  },
+  "attachment_upload": {
+    "name": "github.attachment_upload",
+    "description": "Upload file attachment to platform",
+    "inputSchema": {...},
+    "_proxy_endpoint": "POST /upload-attachment",
+    "_proxy_direction": "upload"
+  }
+}
+```
+
 **Endpoint:** `POST /call`
 
 Request body:

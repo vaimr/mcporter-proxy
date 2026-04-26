@@ -903,5 +903,180 @@ class TestBuildHeaders(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+class TestSchemaEndpoint(unittest.TestCase):
+    def test_parse_mcporter_schema_output_basic(self):
+        from server.server import _parse_mcporter_schema_output
+
+        sample = """cognee
+
+  /**
+   * Transform ingested data into a knowledge graph.
+   */
+  function cognify(data: string);
+      {
+        "type": "object",
+        "properties": {
+          "data": {"type": "string"}
+        },
+        "required": ["data"],
+        "title": "cognifyArguments"
+      }
+
+  Examples:
+"""
+        tools = _parse_mcporter_schema_output(sample)
+        self.assertEqual(len(tools), 1)
+        self.assertEqual(tools[0]["name"], "cognify")
+        self.assertEqual(
+            tools[0]["description"], "Transform ingested data into a knowledge graph."
+        )
+        self.assertEqual(tools[0]["inputSchema"]["type"], "object")
+        self.assertIn("data", tools[0]["inputSchema"]["properties"])
+
+    def test_parse_mcporter_schema_output_multiple_tools(self):
+        from server.server import _parse_mcporter_schema_output
+
+        sample = """cognee
+
+  /**
+   * First tool description.
+   */
+  function tool_one(param: string);
+      {
+        "type": "object",
+        "properties": {
+          "param": {"type": "string"}
+        }
+      }
+
+  /**
+   * Second tool description.
+   */
+  function tool_two(value: number);
+      {
+        "type": "object",
+        "properties": {
+          "value": {"type": "number"}
+        }
+      }
+
+  Examples:
+"""
+        tools = _parse_mcporter_schema_output(sample)
+        self.assertEqual(len(tools), 2)
+        self.assertEqual(tools[0]["name"], "tool_one")
+        self.assertEqual(tools[1]["name"], "tool_two")
+
+    def test_parse_mcporter_schema_output_no_description(self):
+        from server.server import _parse_mcporter_schema_output
+
+        sample = """cognee
+
+  function no_desc(param: string);
+      {
+        "type": "object",
+        "properties": {
+          "param": {"type": "string"}
+        }
+      }
+
+  Examples:
+"""
+        tools = _parse_mcporter_schema_output(sample)
+        self.assertEqual(len(tools), 1)
+        self.assertEqual(tools[0]["name"], "no_desc")
+        self.assertEqual(tools[0]["description"], "")
+
+    def test_build_attachment_schema_download(self):
+        from server.server import build_attachment_schema
+
+        schema = build_attachment_schema("github", {}, "download")
+        self.assertEqual(schema["name"], "github.attachment_download")
+        self.assertEqual(schema["_proxy_endpoint"], "POST /download-attachment")
+        self.assertEqual(schema["_proxy_direction"], "download")
+        self.assertIn("args", schema["inputSchema"]["properties"])
+        args_props = schema["inputSchema"]["properties"]["args"]["properties"]
+        self.assertIn("owner", args_props)
+        self.assertIn("repo", args_props)
+        self.assertIn("asset_id", args_props)
+
+    def test_build_attachment_schema_upload(self):
+        from server.server import build_attachment_schema
+
+        schema = build_attachment_schema("github", {}, "upload")
+        self.assertEqual(schema["name"], "github.attachment_upload")
+        self.assertEqual(schema["_proxy_endpoint"], "POST /upload-attachment")
+        self.assertIn("file", schema["inputSchema"]["properties"]["args"]["properties"])
+
+    def test_build_attachment_schema_confluence(self):
+        from server.server import build_attachment_schema
+
+        schema = build_attachment_schema("confluence", {}, "download")
+        args_props = schema["inputSchema"]["properties"]["args"]["properties"]
+        self.assertIn("page_id", args_props)
+        self.assertIn("filename", args_props)
+
+    def test_build_attachment_schema_jira(self):
+        from server.server import build_attachment_schema
+
+        schema = build_attachment_schema("jira", {}, "upload")
+        args_props = schema["inputSchema"]["properties"]["args"]["properties"]
+        self.assertIn("issue_key", args_props)
+        self.assertIn("name", args_props)
+        self.assertIn("file", args_props)
+
+    def test_run_mcporter_list_schema_file_not_found(self):
+        from server.server import run_mcporter_list_schema
+
+        tools, error = run_mcporter_list_schema("nonexistent")
+        self.assertEqual(tools, [])
+        self.assertIn("not found", error)
+
+    def test_run_mcporter_list_schema_empty_output(self):
+        from server.server import _parse_mcporter_schema_output
+
+        tools = _parse_mcporter_schema_output("")
+        self.assertEqual(tools, [])
+
+    def test_run_mcporter_list_schema_malformed_json(self):
+        from server.server import _parse_mcporter_schema_output
+
+        sample = """cognee
+
+  function broken(data: string);
+      {
+        "type": "object",
+        "properties": {
+          "data": {"type": "string"
+        }
+      }
+
+  Examples:
+"""
+        tools = _parse_mcporter_schema_output(sample)
+        self.assertEqual(len(tools), 0)
+
+    def test_get_download_args_properties_cognee(self):
+        from server.server import _get_download_args_properties
+
+        props = _get_download_args_properties("cognee")
+        self.assertIn("dataset_name", props)
+        self.assertEqual(props["dataset_name"]["type"], "string")
+
+    def test_get_upload_args_properties_cognee(self):
+        from server.server import _get_upload_args_properties
+
+        props = _get_upload_args_properties("cognee")
+        self.assertIn("data", props)
+        self.assertIn("dataset_name", props)
+
+    def test_build_attachment_schema_mcptype_const(self):
+        from server.server import build_attachment_schema
+
+        schema = build_attachment_schema("gitlab", {}, "download")
+        mcptype_const = schema["inputSchema"]["properties"]["mcptype"]
+        self.assertEqual(mcptype_const, {"const": "gitlab"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -53,6 +53,18 @@ curl http://localhost:8080/health
 
 Returns `{"status": "ok"}` for load balancer health checks.
 
+### Schema Endpoints
+
+```bash
+# List all available mcptypes
+curl -H "X-MCP-Auth-Key: <key>" http://localhost:8080/schema
+
+# Get schema for specific mcptype
+curl -H "X-MCP-Auth-Key: <key>" http://localhost:8080/schema/github
+```
+
+Returns list of mcptypes or full schema with tools and attachment endpoints.
+
 ## Environment Variables
 
 | Variable | Required | Description |

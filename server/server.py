@@ -182,6 +182,221 @@ def get_attachment_download_config(mcptype: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def run_mcporter_list_schema(
+    mcptype: str,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    cmd = ["mcporter", "list", mcptype, "--schema"]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            return [], f"mcporter returned {result.returncode}: {result.stderr}"
+        return _parse_mcporter_schema_output(result.stdout), None
+    except FileNotFoundError:
+        return [], "mcporter not found"
+    except subprocess.TimeoutExpired:
+        return [], "mcporter timed out"
+    except Exception as e:
+        return [], str(e)
+
+
+def _parse_mcporter_schema_output(output: str) -> List[Dict[str, Any]]:
+    tools = []
+    current_tool: Optional[Dict[str, Any]] = None
+    json_buffer: List[str] = []
+    in_json = False
+    json_depth = 0
+    pending_desc_lines: List[str] = []
+    pending_desc_active = False
+
+    for line in output.splitlines():
+        line = line.rstrip()
+        if not in_json:
+            if pending_desc_active and line.strip() == "*/":
+                pending_desc_active = False
+                continue
+            elif pending_desc_active:
+                if line.startswith("   *"):
+                    line = line[4:]
+                    if line.startswith("*"):
+                        line = line[1:]
+                    line = line.strip()
+                elif line.strip().startswith("*"):
+                    line = line.strip()[1:].strip()
+                else:
+                    line = line.strip()
+                if line:
+                    pending_desc_lines.append(line)
+                continue
+
+        if line.startswith("  /**"):
+            pending_desc_active = True
+            pending_desc_lines = []
+            continue
+        elif "Examples:" in line or line.startswith("  ---"):
+            pending_desc_lines = []
+            pending_desc_active = False
+            continue
+
+        if re.match(r"^\s*function\s+", line):
+            func_match = re.match(r"^\s*function\s+(\w+)\s*\(([^)]*)\)", line)
+            if func_match:
+                if pending_desc_lines:
+                    description = "\n".join(pending_desc_lines).strip()
+                else:
+                    description = ""
+                current_tool = {
+                    "name": func_match.group(1),
+                    "description": description,
+                    "inputSchema": {},
+                }
+                pending_desc_lines = []
+                pending_desc_active = False
+            continue
+
+        if current_tool is not None and not in_json:
+            if "{" in line:
+                in_json = True
+                json_depth = line.count("{") - line.count("}")
+                json_buffer = [line]
+                continue
+
+        if in_json:
+            json_buffer.append(line)
+            for char in line:
+                if char == "{":
+                    json_depth += 1
+                elif char == "}":
+                    json_depth -= 1
+            if json_depth == 0:
+                in_json = False
+                json_str = "\n".join(json_buffer)
+                json_str = json_str.rstrip(",").rstrip()
+                try:
+                    schema = json.loads(json_str)
+                    current_tool["inputSchema"] = schema
+                except json.JSONDecodeError:
+                    pass
+                json_buffer = []
+                tools.append(current_tool)
+                current_tool = None
+
+    return tools
+
+
+def build_attachment_schema(
+    mcptype: str,
+    config: Dict[str, Any],
+    direction: str,
+) -> Dict[str, Any]:
+    endpoint = (
+        "/download-attachment" if direction == "download" else "/upload-attachment"
+    )
+    method = "POST"
+    if direction == "download":
+        desc = "Download file attachment from platform"
+        args_props = _get_download_args_properties(mcptype)
+    else:
+        desc = "Upload file attachment to platform"
+        args_props = _get_upload_args_properties(mcptype)
+
+    return {
+        "name": f"{mcptype}.attachment_{direction}",
+        "description": desc,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mcptype": {"const": mcptype},
+                "args": {
+                    "type": "object",
+                    "properties": args_props,
+                },
+            },
+        },
+        "_proxy_endpoint": f"{method} {endpoint}",
+        "_proxy_direction": direction,
+    }
+
+
+def _get_download_args_properties(mcptype: str) -> Dict[str, Any]:
+    if mcptype == "github":
+        return {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "asset_id": {"type": "string"},
+            "filename": {"type": "string"},
+        }
+    elif mcptype == "gitlab":
+        return {
+            "project_id": {"type": "string"},
+            "file_path": {"type": "string"},
+            "ref": {"type": "string"},
+        }
+    elif mcptype in ("confluence", "atlassian"):
+        return {
+            "page_id": {"type": "string"},
+            "filename": {"type": "string"},
+        }
+    elif mcptype == "jira":
+        return {
+            "issue_key": {"type": "string"},
+            "attachment_id": {"type": "string"},
+        }
+    elif mcptype == "cognee":
+        return {
+            "dataset_name": {"type": "string"},
+        }
+    else:
+        return {
+            "id": {"type": "string"},
+            "filename": {"type": "string"},
+        }
+
+
+def _get_upload_args_properties(mcptype: str) -> Dict[str, Any]:
+    if mcptype == "github":
+        return {
+            "owner": {"type": "string"},
+            "repo": {"type": "string"},
+            "upload_url": {"type": "string"},
+            "name": {"type": "string"},
+            "file": {"type": "string"},
+        }
+    elif mcptype == "gitlab":
+        return {
+            "project_id": {"type": "string"},
+            "name": {"type": "string"},
+            "file": {"type": "string"},
+        }
+    elif mcptype in ("confluence", "atlassian"):
+        return {
+            "page_id": {"type": "string"},
+            "name": {"type": "string"},
+            "file": {"type": "string"},
+        }
+    elif mcptype == "jira":
+        return {
+            "issue_key": {"type": "string"},
+            "name": {"type": "string"},
+            "file": {"type": "string"},
+        }
+    elif mcptype == "cognee":
+        return {
+            "data": {"type": "string"},
+            "dataset_name": {"type": "string"},
+        }
+    else:
+        return {
+            "name": {"type": "string"},
+            "file": {"type": "string"},
+        }
+
+
 def substitute_template(template: str, values: Dict[str, str]) -> str:
     result = template
     for key, value in values.items():
@@ -707,8 +922,77 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
+        elif self.path == "/schema":
+            self._handle_schema_list()
+        elif self.path.startswith("/schema/"):
+            mcptype = self.path[8:]
+            self._handle_schema_mcptype(mcptype)
         else:
             self.send_error(404, "Endpoint not found")
+
+    def _handle_schema_list(self):
+        auth_key = self.headers.get("X-MCP-Auth-Key")
+        if not auth_key:
+            self.send_error(401, "Authentication required")
+            return
+        auth_parts = parse_auth_key(auth_key)
+        if not auth_parts:
+            self.send_error(401, "Invalid auth key format")
+            return
+
+        mcptypes = list(MCP_ENV_MAP.keys())
+        response = {"mcptypes": mcptypes}
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(response).encode("utf-8"))
+
+    def _handle_schema_mcptype(self, mcptype: str):
+        auth_key = self.headers.get("X-MCP-Auth-Key")
+        if not auth_key:
+            self.send_error(401, "Authentication required")
+            return
+        auth_parts = parse_auth_key(auth_key)
+        if not auth_parts:
+            self.send_error(401, "Invalid auth key format")
+            return
+
+        if mcptype not in MCP_ENV_MAP:
+            self.send_error(404, f"Unknown mcptype: {mcptype}")
+            return
+
+        tools, error = run_mcporter_list_schema(mcptype)
+
+        download_config = get_attachment_download_config(mcptype)
+        upload_config = get_attachment_upload_config(mcptype)
+
+        attachment_download = None
+        if download_config:
+            attachment_download = build_attachment_schema(
+                mcptype, download_config, "download"
+            )
+
+        attachment_upload = None
+        if upload_config:
+            attachment_upload = build_attachment_schema(
+                mcptype, upload_config, "upload"
+            )
+
+        response = {
+            "name": mcptype,
+            "tools": tools,
+        }
+        if error:
+            response["error"] = error
+        if attachment_download:
+            response["attachment_download"] = attachment_download
+        if attachment_upload:
+            response["attachment_upload"] = attachment_upload
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(response).encode("utf-8"))
 
     def do_POST(self):
         if self.path == "/call":

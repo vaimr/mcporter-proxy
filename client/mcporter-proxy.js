@@ -11,6 +11,8 @@ const PROXY_URL = process.env.MCPORTER_PROXY_URL || "http://host.docker.internal
 const CALL_PATH = "/call";
 const DOWNLOAD_PATH = "/download-attachment";
 const UPLOAD_PATH = "/upload-attachment";
+const SCHEMA_LIST_PATH = "/schema";
+const SCHEMA_MCPTYPE_PATH_PREFIX = "/schema/";
 const TIMEOUT_MS = parseInt(process.env.MCPORTER_PROXY_TIMEOUT || "120000", 10);
 const MAX_RETRIES = parseInt(process.env.MCPORTER_PROXY_RETRIES || "2", 10);
 const RETRY_DELAY_MS = parseInt(process.env.MCPORTER_PROXY_RETRY_DELAY || "1000", 10);
@@ -254,6 +256,21 @@ function parseUploadArgs(args) {
   return { mcptype, args: uploadArgs, filePath, contentType };
 }
 
+function parseSchemaArgs(args) {
+  const mcptype = args.length > 0 ? args[0] : null;
+  let outputFormat = "text";
+
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--json") {
+      outputFormat = "json";
+    }
+  }
+
+  log("DEBUG", `Parsed schema: mcptype=${mcptype}, format=${outputFormat}`);
+  return { mcptype, outputFormat };
+}
+
 async function proxyUploadRequest(mcptype, args, filePath, contentType) {
   if (!AUTH_KEY) {
     console.error("MCPORTER_PROXY_AUTH_KEY is not set");
@@ -348,6 +365,127 @@ async function proxyUploadRequest(mcptype, args, filePath, contentType) {
   });
 }
 
+async function proxySchemaRequest(mcptype, outputFormat) {
+  if (!AUTH_KEY) {
+    console.error("MCPORTER_PROXY_AUTH_KEY is not set");
+    process.exit(1);
+  }
+
+  const schemaPath = mcptype
+    ? SCHEMA_MCPTYPE_PATH_PREFIX + mcptype
+    : SCHEMA_LIST_PATH;
+
+  const url = new URL(schemaPath, PROXY_URL);
+  const client = url.protocol === "https:" ? https : http;
+
+  log("DEBUG", `Proxy URL: ${url.href}`);
+
+  const requestOptions = {
+    hostname: url.hostname,
+    port: url.port || (url.protocol === "https:" ? 443 : 80),
+    path: url.pathname + url.search,
+    method: "GET",
+    headers: {
+      "X-MCP-Auth-Key": AUTH_KEY,
+    },
+    timeout: TIMEOUT_MS,
+  };
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    log("INFO", `Attempt ${attempt + 1}/${MAX_RETRIES + 1} to ${url.hostname}:${url.port}${requestOptions.path}`);
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const req = client.request(requestOptions, (res) => {
+          let data = "";
+          res.on("data", (chunk) => data += chunk);
+          res.on("end", () => resolve({ res, data }));
+        });
+        req.on("error", (err) => {
+          log("ERROR", `Connection error: ${err.message}`);
+          reject(err);
+        });
+        req.on("timeout", () => {
+          req.destroy();
+          log("ERROR", "Request timeout");
+          reject(new Error("Request timeout"));
+        });
+        req.end();
+      });
+
+      const { res, data } = response;
+      log("DEBUG", `Response status: ${res.statusCode} ${res.statusMessage}`);
+
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        if (outputFormat === "json") {
+          try {
+            const json = JSON.parse(data);
+            console.log(JSON.stringify(json, null, 2));
+          } catch (e) {
+            console.log(data);
+          }
+        } else {
+          if (!mcptype) {
+            const json = JSON.parse(data);
+            if (json.mcptypes && Array.isArray(json.mcptypes)) {
+              console.log("Available mcptypes:");
+              for (const t of json.mcptypes) {
+                console.log(`  - ${t}`);
+              }
+            } else {
+              console.log(data);
+            }
+          } else {
+            const json = JSON.parse(data);
+            console.log(`Schema for ${json.name}:`);
+            if (json.tools && Array.isArray(json.tools)) {
+              console.log("\nTools:");
+              for (const tool of json.tools) {
+                console.log(`  ${tool.name}`);
+                if (tool.description) {
+                  console.log(`    ${tool.description.split('\n')[0]}`);
+                }
+              }
+            }
+            if (json.attachment_download) {
+              console.log("\nAttachment Download:");
+              console.log(`  ${json.attachment_download.name}`);
+              if (json.attachment_download.description) {
+                console.log(`    ${json.attachment_download.description.split('\n')[0]}`);
+              }
+            }
+            if (json.attachment_upload) {
+              console.log("\nAttachment Upload:");
+              console.log(`  ${json.attachment_upload.name}`);
+              if (json.attachment_upload.description) {
+                console.log(`    ${json.attachment_upload.description.split('\n')[0]}`);
+              }
+            }
+          }
+        }
+        process.exit(0);
+      } else {
+        const errorMsg = `Schema request failed: ${res.statusCode} ${res.statusMessage}`;
+        log("ERROR", `${errorMsg} | Response: ${data ? data.substring(0, 200) : 'N/A'}`);
+        if (attempt === MAX_RETRIES) {
+          console.error(errorMsg);
+          if (data) console.error(data);
+          process.exit(1);
+        }
+        log("INFO", `Retrying in ${RETRY_DELAY_MS}ms...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+      }
+    } catch (error) {
+      log("ERROR", `Failed to connect: ${error.message}`);
+      if (attempt === MAX_RETRIES) {
+        console.error(`Failed to connect to proxy: ${error.message}`);
+        process.exit(1);
+      }
+      log("INFO", `Retrying in ${RETRY_DELAY_MS}ms...`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+  }
+}
+
 async function main() {
   const command = args[0];
 
@@ -370,6 +508,9 @@ async function main() {
     const { mcptype, args: uploadArgs, filePath, contentType } = parseUploadArgs(args.slice(1));
     await proxyUploadRequest(mcptype, uploadArgs, filePath, contentType);
     process.exit(0);
+  } else if (command === "schema") {
+    const { mcptype, outputFormat } = parseSchemaArgs(args.slice(1));
+    await proxySchemaRequest(mcptype, outputFormat);
   } else if (command === "help") {
     console.log(`mcporter-proxy - MCP Proxy Client
 
@@ -377,18 +518,23 @@ Usage:
   mcporter-proxy call <tool> [args]
   mcporter-proxy download <platform> [args] [--output <path>]
   mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]
+  mcporter-proxy schema [mcptype] [--json]
   mcporter-proxy help
 
 Commands:
   call      Execute an MCP tool
   download Download an attachment
   upload    Upload an attachment
+  schema    Show schema for mcptypes (default: list all; --json: raw JSON)
 
 Examples:
   mcporter-proxy call github.list_repos visibility=private
   mcporter-proxy download github owner=octocat repo=hello-world asset_id=123 --output release.zip
   mcporter-proxy upload confluence page_id=123456 name=report.pdf --file ./report.pdf
   mcporter-proxy upload jira issue_key=PROJ-123 name=attachment.zip --file ./attachment.zip
+  mcporter-proxy schema
+  mcporter-proxy schema github
+  mcporter-proxy schema github --json
 `);
     process.exit(0);
   } else {
