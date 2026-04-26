@@ -169,7 +169,8 @@ Returns list of servers with their tools. Wraps `mcporter list` command with tok
 
 **Query parameters:**
 - `json=true` - Returns JSON output (parsed from mcporter output)
-- `schema=true` - Includes full tool schemas
+- `schema=true` - Includes full tool schemas (inputSchema, options). Without this flag, meta-tools (attachment_download, attachment_upload) return only name and description
+- `all_parameters=true` - Passes `--all-parameters` to mcporter for including optional parameters in schema
 
 **Endpoint:** `GET /list/<mcptype>`
 
@@ -200,16 +201,16 @@ curl -H "X-MCP-Auth-Key: agent-key" "http://localhost:8080/list/github?json=true
       "transport": "HTTP http://github:3000/mcp",
       "source": {"kind": "local"},
       "tools": [
-        {"name": "list_repos", "description": "List repositories", "inputSchema": {...}},
-        {"name": "github.attachment_download", "description": "...", "inputSchema": {...}},
-        {"name": "github.attachment_upload", "description": "...", "inputSchema": {...}}
+        {"name": "list_repos", "description": "List repositories", "inputSchema": {...}, "options": [...]},
+        {"name": "github.attachment_download", "description": "Download file attachment from platform"},
+        {"name": "github.attachment_upload", "description": "Upload file attachment to platform"}
       ]
     }
   ]
 }
 ```
 
-**Note:** Attachment tools (`attachment_download`, `attachment_upload`) are automatically injected for mcptypes that have corresponding download/upload configurations in `mcp_env_map.json`.
+**Note:** Attachment tools (`attachment_download`, `attachment_upload`) are automatically injected for mcptypes that have corresponding download/upload configurations in `mcp_env_map.json`. Without `schema=true` query param, meta-tools return only `name` and `description`. With `schema=true`, they include `inputSchema` and `options`.
 
 **Endpoint:** `POST /call`
 

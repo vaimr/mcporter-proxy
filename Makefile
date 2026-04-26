@@ -1,10 +1,11 @@
-.PHONY: build build-server build-client test test-client test-skills mock-server mock-stop clean help
+.PHONY: build build-server build-client test test-all test-client test-skills mock-server mock-stop clean help
 
 HELP := "\
 Available targets:\n\
   build        - Build all components (server Docker image + client npm package)\n\
   build-server - Build server Docker image\n\
   build-client - Build client npm package\n\
+  test-all     - Run all tests (unit + integration) via unified test runner\n\
   test         - Run all tests with mock server\n\
   test-client  - Run client unit tests\n\
   test-skills  - Run integration tests (requires real mcporter + external services)\n\
@@ -38,6 +39,10 @@ build-client:
 	@echo "Building client npm package"
 	cd client && npm install --production && npm pack
 	@echo "Client package built"
+
+test-all:
+	@echo "Running all tests via unified test runner..."
+	@bash tests/run_tests.sh
 
 test: mock-start
 	@echo "Running client tests with mock server (MOCK_URL=$(MOCK_URL))"

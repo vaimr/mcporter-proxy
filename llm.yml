@@ -18,7 +18,10 @@ endpoints:
           description: Return JSON output (parsed from mcporter output)
         schema:
           type: boolean
-          description: Include full tool schemas
+          description: Include full tool schemas (inputSchema, options). Without this flag, meta-tools return only name and description.
+        all_parameters:
+          type: boolean
+          description: Pass --all-parameters to mcporter for including optional parameters in schema
     response:
       type: object
       properties:
@@ -30,7 +33,7 @@ endpoints:
           description: Server status counts
         servers:
           type: array
-          description: List of servers with their tools
+          description: List of servers with their tools. Meta-tools (attachment_download, attachment_upload) return only name+description without schema flag, or full schema with inputSchema and options when schema=true
     errors:
       401: Missing or invalid auth key
       500: mcporter execution failed
@@ -50,7 +53,10 @@ endpoints:
           description: Return JSON output
         schema:
           type: boolean
-          description: Include full tool schemas
+          description: Include full tool schemas (inputSchema, options)
+        all_parameters:
+          type: boolean
+          description: Pass --all-parameters to mcporter
     response:
       type: object
       properties:
@@ -65,7 +71,7 @@ endpoints:
           description: Server status
         tools:
           type: array
-          description: List of tools including injected attachment tools
+          description: List of tools including injected attachment tools. Meta-tools return name+description only unless schema=true
     errors:
       401: Missing or invalid auth key
       404: mcptype not found

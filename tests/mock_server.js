@@ -54,22 +54,22 @@ const MOCK_RESPONSES = {
     returncode: 1,
   },
   "atlassian.jira_search": {
-    stdout: '{"result": [{"id": "10001", "key": "NIVABOY-1", "summary": "Test issue"}]}',
+    stdout: '{"result": [{"id": "10001", "key": "PROJ-1", "summary": "Test issue"}]}',
     stderr: "",
     returncode: 0,
   },
   "atlassian.jira_get_issue": {
-    stdout: '{"id": "10001", "key": "NIVABOY-1", "summary": "Test issue", "status": "In Progress"}',
+    stdout: '{"id": "10001", "key": "PROJ-1", "summary": "Test issue", "status": "In Progress"}',
     stderr: "",
     returncode: 0,
   },
   "atlassian.jira_get_all_projects": {
-    stdout: '{"result": "[{\"key\":\"NIVABOY\",\"name\":\"NivaBoy Project\"}]"}',
+    stdout: '{"result": "[{\"key\":\"PROJ\",\"name\":\"NivaBoy Project\"}]"}',
     stderr: "",
     returncode: 0,
   },
   "atlassian.confluence_search": {
-    stdout: '{"result": "[{\"id\":\"258736469\",\"title\":\"Architecture Overview\",\"url\":\"https://conf.devsun.ru/pages/viewpage.action?pageId=258736469\"}]"}',
+    stdout: '{"result": "[{\"id\":\"258736469\",\"title\":\"Architecture Overview\",\"url\":\"https://conf.sample.com/pages/viewpage.action?pageId=258736469\"}]"}',
     stderr: "",
     returncode: 0,
   },

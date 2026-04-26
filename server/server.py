@@ -295,6 +295,78 @@ def _parse_mcporter_schema_output(output: str) -> List[Dict[str, Any]]:
     return tools
 
 
+def _camel_to_kebab(name: str) -> str:
+    result = []
+    for i, char in enumerate(name):
+        if char == "_":
+            if result and result[-1] != "-":
+                result.append("-")
+        elif char.isupper() and i > 0:
+            if result and result[-1] != "-":
+                result.append("-")
+            result.append(char.lower())
+        else:
+            result.append(char.lower())
+    return "".join(result).rstrip("-")
+
+
+def transform_meta_tool(
+    tool: Dict[str, Any], include_schema: bool = True
+) -> Dict[str, Any]:
+    if "_proxy_endpoint" not in tool and "_proxy_direction" not in tool:
+        result = dict(tool)
+        result["options"] = []
+        return result
+
+    name = tool.get("name", "")
+    description = tool.get("description", "")
+
+    if not include_schema:
+        return {"name": name, "description": description}
+
+    input_schema = tool.get("inputSchema", {})
+    properties = input_schema.get("properties", {})
+
+    args_props = properties.get("args", {}).get("properties", {})
+    if not args_props:
+        args_props = {k: v for k, v in properties.items() if k != "mcptype"}
+
+    flat_props = {}
+    options = []
+    for prop_name, prop_value in args_props.items():
+        if prop_name in ("mcptype", "_proxy_endpoint", "_proxy_direction"):
+            continue
+        if not isinstance(prop_value, dict):
+            continue
+
+        required = prop_value.get("required", False)
+        prop_type = prop_value.get("type", "string")
+        prop_desc = prop_value.get("description", "")
+
+        flat_props[prop_name] = {"type": prop_type}
+        if prop_desc:
+            flat_props[prop_name]["description"] = prop_desc
+
+        options.append(
+            {
+                "property": prop_name,
+                "cliName": _camel_to_kebab(prop_name),
+                "description": prop_desc,
+                "required": required,
+                "type": prop_type,
+                "placeholder": f"<{prop_name}>",
+                "exampleValue": "",
+            }
+        )
+
+    return {
+        "name": name,
+        "description": description,
+        "inputSchema": {"type": "object", "properties": flat_props},
+        "options": options,
+    }
+
+
 def build_attachment_schema(
     mcptype: str,
     config: Dict[str, Any],
@@ -428,6 +500,28 @@ def get_secrets_keys(
             )
         keys.append((i, key))
     return keys
+
+
+def get_available_secrets(agent_id: str) -> set:
+    try:
+        result = subprocess.run(
+            ["gloves", "--agent", agent_id, "list", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode == 0:
+            secrets = json.loads(result.stdout)
+            return {s["id"] for s in secrets if s.get("kind") == "secret"}
+    except (
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+        OSError,
+        json.JSONDecodeError,
+    ) as e:
+        logger.error("Failed to list available secrets: %s", e)
+    return set()
 
 
 def resolve_token(mcptype: str, agent_id: str, agent_key: str) -> Optional[str]:
@@ -1036,6 +1130,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
 
         use_json = "json" in params
         use_schema = "schema" in params
+        use_all_params = "all_parameters" in params
 
         # Build mcporter command
         cmd = ["mcporter", "list"]
@@ -1045,10 +1140,15 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             cmd.append("--json")
         if use_schema:
             cmd.append("--schema")
+        if use_all_params:
+            cmd.append("--all-parameters")
 
         # Build env flags for gloves
         # When name is specified, only inject tokens for that mcptype
         # When name is None, inject tokens for ALL configured mcptypes
+        # Only include secrets that actually exist for this agent
+        available_secrets = get_available_secrets(agent_id) if not name else set()
+
         env_flags = []
         if name:
             mcptypes_to_inject = [name]
@@ -1066,6 +1166,8 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                     )
                 else:
                     secrets_key = f"{SECRETS_PREFIX}{sep}{agent_id}{sep}{mcptype}{sep}{agent_key}{sep}{i}"
+                if not name and secrets_key not in available_secrets:
+                    continue
                 env_flags.extend(["--env", f"{env_var}=gloves://{secrets_key}"])
 
         # Wrap command with gloves if we have env flags
@@ -1131,7 +1233,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 return
 
             # Inject attachment tools into each server's tools array
-            self._inject_attachment_tools(data)
+            self._inject_attachment_tools(data, include_schema=use_schema)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1144,28 +1246,30 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(stdout.encode("utf-8"))
 
-    def _inject_attachment_tools(self, data: Any) -> None:
-        inject_attachment_tools(data)
+    def _inject_attachment_tools(self, data: Any, include_schema: bool = True) -> None:
+        inject_attachment_tools(data, include_schema=include_schema)
 
     def _add_attachment_tools_to_server(self, server: Dict[str, Any]) -> None:
-        add_attachment_tools_to_server(server)
+        add_attachment_tools_to_server(server, include_schema=True)
 
 
-def inject_attachment_tools(data: Any) -> None:
+def inject_attachment_tools(data: Any, include_schema: bool = True) -> None:
     if not isinstance(data, dict):
         return
 
     if data.get("mode") == "server":
-        add_attachment_tools_to_server(data)
+        add_attachment_tools_to_server(data, include_schema=include_schema)
         return
 
     servers = data.get("servers", [])
     if isinstance(servers, list):
         for server in servers:
-            add_attachment_tools_to_server(server)
+            add_attachment_tools_to_server(server, include_schema=include_schema)
 
 
-def add_attachment_tools_to_server(server: Dict[str, Any]) -> None:
+def add_attachment_tools_to_server(
+    server: Dict[str, Any], include_schema: bool = True
+) -> None:
     name = server.get("name")
     if not name:
         return
@@ -1177,10 +1281,14 @@ def add_attachment_tools_to_server(server: Dict[str, Any]) -> None:
 
     if download_config:
         download_tool = build_attachment_schema(name, download_config, "download")
+        download_tool = transform_meta_tool(
+            download_tool, include_schema=include_schema
+        )
         tools.append(download_tool)
 
     if upload_config:
         upload_tool = build_attachment_schema(name, upload_config, "upload")
+        upload_tool = transform_meta_tool(upload_tool, include_schema=include_schema)
         tools.append(upload_tool)
 
     server["tools"] = tools

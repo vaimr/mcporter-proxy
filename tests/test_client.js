@@ -92,6 +92,18 @@ assert.strictEqual(listResult.outputFormat, "json", "Should parse --json");
 assert.strictEqual(listResult.wantSchema, true, "Should parse --schema");
 console.log("✅ parseListArgs with name, --json, and --schema");
 
+listResult = parseListArgs(["--all-parameters"]);
+assert.strictEqual(listResult.name, null, "Should have null name");
+assert.strictEqual(listResult.wantAllParameters, true, "Should parse --all-parameters flag");
+console.log("✅ parseListArgs with --all-parameters only");
+
+listResult = parseListArgs(["github", "--json", "--schema", "--all-parameters"]);
+assert.strictEqual(listResult.name, "github", "Should parse name");
+assert.strictEqual(listResult.outputFormat, "json", "Should parse --json");
+assert.strictEqual(listResult.wantSchema, true, "Should parse --schema");
+assert.strictEqual(listResult.wantAllParameters, true, "Should parse --all-parameters");
+console.log("✅ parseListArgs with name, --json, --schema, and --all-parameters");
+
 console.log("\n=== Integration Tests ===\n");
 
 console.log("Testing error when MCPORTER_PROXY_AUTH_KEY is not set...");

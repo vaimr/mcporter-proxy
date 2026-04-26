@@ -123,6 +123,217 @@ class TestTemplateSubstitution(unittest.TestCase):
         self.assertEqual(result, "Page 123")
 
 
+class TestTransformMetaTool(unittest.TestCase):
+    def setUp(self):
+        os.environ["MCP_ENV_MAP_PATH"] = TEST_ENV_MAP_PATH
+        import importlib
+        import server.server
+
+        importlib.reload(server.server)
+
+    def tearDown(self):
+        if "MCP_ENV_MAP_PATH" in os.environ:
+            del os.environ["MCP_ENV_MAP_PATH"]
+        import importlib
+        import server.server
+
+        importlib.reload(server.server)
+
+    def test_transform_meta_tool_atlassian_download(self):
+        from server.server import transform_meta_tool
+
+        internal_tool = {
+            "name": "atlassian.attachment_download",
+            "description": "Download file attachment from platform",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mcptype": {"const": "atlassian"},
+                    "args": {
+                        "type": "object",
+                        "properties": {
+                            "page_id": {"type": "string"},
+                            "filename": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "_proxy_endpoint": "POST /download-attachment",
+            "_proxy_direction": "download",
+        }
+
+        result = transform_meta_tool(internal_tool)
+
+        self.assertEqual(result["name"], "atlassian.attachment_download")
+        self.assertEqual(
+            result["description"], "Download file attachment from platform"
+        )
+        self.assertIn("inputSchema", result)
+        self.assertIn("options", result)
+
+        self.assertNotIn("_proxy_endpoint", result)
+        self.assertNotIn("_proxy_direction", result)
+        self.assertNotIn("mcptype", result["inputSchema"]["properties"])
+        self.assertNotIn("args", result["inputSchema"]["properties"])
+
+        props = result["inputSchema"]["properties"]
+        self.assertIn("page_id", props)
+        self.assertIn("filename", props)
+
+        options = {o["property"]: o for o in result["options"]}
+        self.assertIn("page_id", options)
+        self.assertIn("filename", options)
+        self.assertEqual(options["page_id"]["cliName"], "page-id")
+        self.assertEqual(options["filename"]["cliName"], "filename")
+
+    def test_transform_meta_tool_github_upload(self):
+        from server.server import transform_meta_tool
+
+        internal_tool = {
+            "name": "github.attachment_upload",
+            "description": "Upload file attachment to platform",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mcptype": {"const": "github"},
+                    "args": {
+                        "type": "object",
+                        "properties": {
+                            "owner": {"type": "string"},
+                            "repo": {"type": "string"},
+                            "upload_url": {"type": "string"},
+                            "name": {"type": "string"},
+                            "file": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "_proxy_endpoint": "POST /upload-attachment",
+            "_proxy_direction": "upload",
+        }
+
+        result = transform_meta_tool(internal_tool)
+
+        self.assertEqual(result["name"], "github.attachment_upload")
+        props = result["inputSchema"]["properties"]
+        self.assertIn("owner", props)
+        self.assertIn("repo", props)
+        self.assertIn("upload_url", props)
+        self.assertIn("name", props)
+        self.assertIn("file", props)
+        self.assertEqual(len(props), 5)
+
+        options = result["options"]
+        self.assertEqual(len(options), 5)
+
+    def test_transform_meta_tool_passes_through_regular_tool(self):
+        from server.server import transform_meta_tool
+
+        regular_tool = {
+            "name": "confluence_get_page_images",
+            "description": "Get all images attached to a Confluence page",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"content_id": {"type": "string"}},
+            },
+        }
+
+        result = transform_meta_tool(regular_tool)
+
+        self.assertEqual(result["name"], "confluence_get_page_images")
+        self.assertIn("content_id", result["inputSchema"]["properties"])
+        self.assertIn("options", result)
+        self.assertEqual(len(result["options"]), 0)
+
+    def test_transform_meta_tool_camel_to_kebab(self):
+        from server.server import _camel_to_kebab
+
+        self.assertEqual(_camel_to_kebab("pageId"), "page-id")
+        self.assertEqual(_camel_to_kebab("content_id"), "content-id")
+        self.assertEqual(_camel_to_kebab("uploadURL"), "upload-u-r-l")
+        self.assertEqual(_camel_to_kebab("someID"), "some-i-d")
+
+    def test_transform_meta_tool_without_schema(self):
+        from server.server import transform_meta_tool
+
+        internal_tool = {
+            "name": "atlassian.attachment_download",
+            "description": "Download file attachment from platform",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mcptype": {"const": "atlassian"},
+                    "args": {
+                        "type": "object",
+                        "properties": {
+                            "page_id": {"type": "string"},
+                            "filename": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "_proxy_endpoint": "POST /download-attachment",
+            "_proxy_direction": "download",
+        }
+
+        result = transform_meta_tool(internal_tool, include_schema=False)
+
+        self.assertEqual(result["name"], "atlassian.attachment_download")
+        self.assertEqual(
+            result["description"], "Download file attachment from platform"
+        )
+        self.assertNotIn("inputSchema", result)
+        self.assertNotIn("options", result)
+
+    def test_transform_meta_tool_with_schema(self):
+        from server.server import transform_meta_tool
+
+        internal_tool = {
+            "name": "atlassian.attachment_download",
+            "description": "Download file attachment from platform",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "mcptype": {"const": "atlassian"},
+                    "args": {
+                        "type": "object",
+                        "properties": {
+                            "page_id": {"type": "string"},
+                            "filename": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            "_proxy_endpoint": "POST /download-attachment",
+            "_proxy_direction": "download",
+        }
+
+        result = transform_meta_tool(internal_tool, include_schema=True)
+
+        self.assertEqual(result["name"], "atlassian.attachment_download")
+        self.assertEqual(
+            result["description"], "Download file attachment from platform"
+        )
+        self.assertIn("inputSchema", result)
+        self.assertIn("options", result)
+        self.assertIn("page_id", result["inputSchema"]["properties"])
+
+    def test_transform_meta_tool_regular_tool_always_has_options(self):
+        from server.server import transform_meta_tool
+
+        regular_tool = {
+            "name": "some_tool",
+            "description": "A regular tool",
+            "inputSchema": {"type": "object", "properties": {}},
+        }
+
+        result = transform_meta_tool(regular_tool, include_schema=False)
+
+        self.assertEqual(result["name"], "some_tool")
+        self.assertIn("options", result)
+        self.assertEqual(len(result["options"]), 0)
+
+
 class TestGetEnvVarsForMcptype(unittest.TestCase):
     def setUp(self):
         os.environ["MCP_ENV_MAP_PATH"] = TEST_ENV_MAP_PATH
@@ -1198,9 +1409,7 @@ class TestInjectAttachmentTools(unittest.TestCase):
         self.assertIn("create_gist", tool_names)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
+class TestListEndpoint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.mock_dir = tempfile.mkdtemp()
@@ -1236,7 +1445,23 @@ exit 0
 
         cls.mock_gloves_path = os.path.join(cls.mock_dir, "gloves")
         with open(cls.mock_gloves_path, "w") as f:
-            f.write("""#!/bin/bash
+            f.write(f"""#!/bin/bash
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --env)
+            shift
+            env_spec="$1"
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            shift
+            ;;
+    esac
+    shift
+done
 exec "$@"
 exit 0
 """)
@@ -1245,6 +1470,7 @@ exit 0
         cls.env = os.environ.copy()
         cls.env["PATH"] = cls.mock_dir + ":" + os.environ.get("PATH", "")
         cls.env["MCPORTER_PROXY_PORT"] = str(SERVER_PORT)
+        cls.env["MCPORTER_PROXY_ALLOWED_TOOLS"] = "test_tool_*"
         cls.env["MCPORTER_PROXY_LOG_LEVEL"] = "WARNING"
         cls.server_process = subprocess.Popen(
             [sys.executable, SERVER_SCRIPT],
@@ -1327,6 +1553,34 @@ exit 0
         self.assertIn("github.attachment_download", tool_names)
         self.assertIn("github.attachment_upload", tool_names)
 
+    def test_attachment_tools_have_name_and_description_only_without_schema_flag(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request("GET", "/list?json=true", headers={"X-MCP-Auth-Key": "agent-key"})
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        github_server = next(
+            (s for s in body.get("servers", []) if s["name"] == "github"), None
+        )
+        self.assertIsNotNone(github_server)
+
+        download_tool = next(
+            (
+                t
+                for t in github_server.get("tools", [])
+                if t["name"] == "github.attachment_download"
+            ),
+            None,
+        )
+        self.assertIsNotNone(download_tool)
+
+        self.assertIn("name", download_tool)
+        self.assertIn("description", download_tool)
+        self.assertNotIn("inputSchema", download_tool)
+        self.assertNotIn("options", download_tool)
+        self.assertNotIn("_proxy_endpoint", download_tool)
+        self.assertNotIn("_proxy_direction", download_tool)
+
     def test_list_with_schema_flag(self):
         conn = HTTPConnection("localhost", SERVER_PORT)
         conn.request(
@@ -1361,3 +1615,81 @@ exit 0
         self.assertEqual(body.get("mode"), "server")
         self.assertEqual(body.get("name"), "github")
         self.assertGreater(len(body.get("tools", [])), 400)
+
+    def test_list_json_returns_meta_tools_with_name_and_description_only(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET", "/list/github?json=true", headers={"X-MCP-Auth-Key": "agent-key"}
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        tools = body.get("tools", [])
+        meta_tool = next(
+            (t for t in tools if t.get("name") == "github.attachment_download"), None
+        )
+        self.assertIsNotNone(meta_tool)
+        self.assertIn("name", meta_tool)
+        self.assertIn("description", meta_tool)
+        self.assertNotIn("inputSchema", meta_tool)
+        self.assertNotIn("options", meta_tool)
+
+    def test_list_json_with_schema_returns_meta_tools_with_full_schema(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET",
+            "/list/github?json=true&schema=true",
+            headers={"X-MCP-Auth-Key": "agent-key"},
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        tools = body.get("tools", [])
+        meta_tool = next(
+            (t for t in tools if t.get("name") == "github.attachment_download"), None
+        )
+        self.assertIsNotNone(meta_tool)
+        self.assertIn("name", meta_tool)
+        self.assertIn("description", meta_tool)
+        self.assertIn("inputSchema", meta_tool)
+        self.assertIn("options", meta_tool)
+        self.assertIn("owner", meta_tool["inputSchema"]["properties"])
+
+    def test_list_json_returns_upload_meta_tool_name_description_only(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET", "/list/github?json=true", headers={"X-MCP-Auth-Key": "agent-key"}
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        tools = body.get("tools", [])
+        meta_tool = next(
+            (t for t in tools if t.get("name") == "github.attachment_upload"), None
+        )
+        self.assertIsNotNone(meta_tool)
+        self.assertEqual(meta_tool["name"], "github.attachment_upload")
+        self.assertIn("description", meta_tool)
+        self.assertNotIn("inputSchema", meta_tool)
+        self.assertNotIn("options", meta_tool)
+
+    def test_list_json_with_schema_returns_upload_meta_tool_with_options(self):
+        conn = HTTPConnection("localhost", SERVER_PORT)
+        conn.request(
+            "GET",
+            "/list/github?json=true&schema=true",
+            headers={"X-MCP-Auth-Key": "agent-key"},
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        body = json.loads(resp.read().decode())
+        tools = body.get("tools", [])
+        meta_tool = next(
+            (t for t in tools if t.get("name") == "github.attachment_upload"), None
+        )
+        self.assertIsNotNone(meta_tool)
+        self.assertIn("options", meta_tool)
+        option_names = [o["property"] for o in meta_tool["options"]]
+        self.assertIn("owner", option_names)
+        self.assertIn("repo", option_names)
+        self.assertIn("name", option_names)

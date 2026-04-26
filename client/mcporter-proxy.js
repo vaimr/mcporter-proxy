@@ -256,10 +256,11 @@ function parseUploadArgs(args) {
 }
 
 function parseListArgs(args) {
-  const FLAGS = ["--json", "--schema"];
+  const FLAGS = ["--json", "--schema", "--all-parameters"];
   let name = null;
   let outputFormat = "text";
   let wantSchema = false;
+  let wantAllParameters = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -267,13 +268,15 @@ function parseListArgs(args) {
       outputFormat = "json";
     } else if (arg === "--schema") {
       wantSchema = true;
+    } else if (arg === "--all-parameters") {
+      wantAllParameters = true;
     } else if (!arg.startsWith("--")) {
       name = arg;
     }
   }
 
-  log("DEBUG", `Parsed list: name=${name}, format=${outputFormat}, schema=${wantSchema}`);
-  return { name, outputFormat, wantSchema };
+  log("DEBUG", `Parsed list: name=${name}, format=${outputFormat}, schema=${wantSchema}, allParameters=${wantAllParameters}`);
+  return { name, outputFormat, wantSchema, wantAllParameters };
 }
 
 async function proxyUploadRequest(mcptype, args, filePath, contentType) {
@@ -370,7 +373,7 @@ async function proxyUploadRequest(mcptype, args, filePath, contentType) {
   });
 }
 
-async function proxyListRequest(name, outputFormat, wantSchema) {
+async function proxyListRequest(name, outputFormat, wantSchema, wantAllParameters) {
   if (!AUTH_KEY) {
     console.error("MCPORTER_PROXY_AUTH_KEY is not set");
     process.exit(1);
@@ -384,6 +387,7 @@ async function proxyListRequest(name, outputFormat, wantSchema) {
   const queryParams = [];
   if (outputFormat === "json") queryParams.push("json=true");
   if (wantSchema) queryParams.push("schema=true");
+  if (wantAllParameters) queryParams.push("all_parameters=true");
   if (queryParams.length > 0) {
     listPath += "?" + queryParams.join("&");
   }
@@ -486,8 +490,8 @@ async function main() {
     await proxyUploadRequest(mcptype, uploadArgs, filePath, contentType);
     process.exit(0);
   } else if (command === "list") {
-    const { name, outputFormat, wantSchema } = parseListArgs(args.slice(1));
-    await proxyListRequest(name, outputFormat, wantSchema);
+    const { name, outputFormat, wantSchema, wantAllParameters } = parseListArgs(args.slice(1));
+    await proxyListRequest(name, outputFormat, wantSchema, wantAllParameters);
   } else if (command === "help") {
     console.log(`mcporter-proxy - MCP Proxy Client
 
@@ -495,14 +499,14 @@ Usage:
   mcporter-proxy call <tool> [args]
   mcporter-proxy download <platform> [args] [--output <path>]
   mcporter-proxy upload <platform> [args] [--file <path>] [--content-type <type>]
-  mcporter-proxy list [name] [--json] [--schema]
+  mcporter-proxy list [name] [--json] [--schema] [--all-parameters]
   mcporter-proxy help
 
 Commands:
   call      Execute an MCP tool
   download Download an attachment
   upload    Upload an attachment
-  list      List servers (mcporter list passthrough with --json and --schema support)
+  list      List servers (mcporter list passthrough with --json, --schema, and --all-parameters support)
 
 Examples:
   mcporter-proxy call github.list_repos visibility=private
@@ -513,6 +517,7 @@ Examples:
   mcporter-proxy list github
   mcporter-proxy list --json
   mcporter-proxy list github --json --schema
+  mcporter-proxy list github --json --schema --all-parameters
 `);
     process.exit(0);
   } else {

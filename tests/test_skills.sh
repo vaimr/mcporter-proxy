@@ -91,16 +91,16 @@ log_skip "forget_memory (skipped - delete operation)"
 echo -e "\n📋 tasks (Jira, read-only)"
 
 run_test "Search issues jira_search" \
-    $CLIENT call atlassian.jira_search jql="project=NIVABOY AND status='In Progress'" limit=5
+    $CLIENT call atlassian.jira_search jql="project=PROJ AND status='In Progress'" limit=5
 
 run_test "Get issue jira_get_issue" \
-    $CLIENT call atlassian.jira_get_issue issue_key="NIVABOY-1"
+    $CLIENT call atlassian.jira_get_issue issue_key="PROJ-1"
 
 run_test "Get projects jira_get_all_projects" \
     $CLIENT call atlassian.jira_get_all_projects
 
 run_test "Get transitions jira_get_transitions" \
-    $CLIENT call atlassian.jira_get_transitions issue_key="NIVABOY-1"
+    $CLIENT call atlassian.jira_get_transitions issue_key="PROJ-1"
 
 run_test "Get agile boards jira_get_agile_boards" \
     $CLIENT call atlassian.jira_get_agile_boards
@@ -112,7 +112,7 @@ run_test "Search fields jira_search_fields" \
     $CLIENT call atlassian.jira_search_fields keyword="custom"
 
 run_test "Project versions jira_get_project_versions" \
-    $CLIENT call atlassian.jira_get_project_versions project_key="NIVABOY"
+    $CLIENT call atlassian.jira_get_project_versions project_key="PROJ"
 
 log_skip "jira_create_issue (skipped - write)"
 log_skip "jira_update_issue (skipped - write)"
