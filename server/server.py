@@ -185,7 +185,8 @@ def get_attachment_download_config(mcptype: str) -> Optional[Dict[str, Any]]:
 def substitute_template(template: str, values: Dict[str, str]) -> str:
     result = template
     for key, value in values.items():
-        result = result.replace(f"{{{key}}}", str(value))
+        encoded = urllib.parse.quote(str(value), safe="-_.~")
+        result = result.replace(f"{{{key}}}", encoded)
     return result
 
 
