@@ -22,6 +22,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1007,11 +1008,9 @@ def upload_via_rest(
     conn.putrequest(method, parsed_url.path, skip_host=True)
     if parsed_url.query:
         conn.putheader("X-Original-URI", f"{parsed_url.path}?{parsed_url.query}")
-    # Set Host header explicitly since skip_host=True skips it
     conn.putheader("Host", parsed_url.netloc)
     for k, v in headers.items():
         if k.lower() != "content-type":
-            # Content-Type will be set below for multipart
             conn.putheader(k, v)
 
     boundary = "----McporterUploadBoundary"
@@ -1832,7 +1831,11 @@ def main():
     import signal
 
     port = int(os.environ.get("MCPORTER_PROXY_PORT", "8080"))
-    server = HTTPServer(("0.0.0.0", port), MCPorterProxyHandler)
+
+    class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+
+    server = ThreadingHTTPServer(("0.0.0.0", port), MCPorterProxyHandler)
 
     def shutdown_handler(_signum, _frame):
         logger.info("Received shutdown signal, closing server...")
