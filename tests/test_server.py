@@ -1264,6 +1264,32 @@ class TestBuildUploadHeaders(unittest.TestCase):
         expected = base64.b64encode(b"user@example.com:api_token").decode()
         self.assertEqual(headers["Authorization"], f"Basic {expected}")
 
+    def test_build_upload_headers_with_token_placeholder(self):
+        """Test that {token} placeholder is substituted directly.
+
+        This reproduces the bug where mcptype 'atlassian' uses:
+          "Authorization": "Bearer {token}"
+        but {token} was NOT being substituted because build_upload_headers
+        only handled ${ENV_VAR} syntax, not {token}.
+        """
+        from server.server import build_upload_headers
+
+        headers_template = {
+            "Authorization": "Bearer {token}",
+            "X-Atlassian-Token": "no-check",
+        }
+        token = "MySecretToken123"
+        extra_secrets = {}
+        args = {"page_id": "217090082", "name": "test.md"}
+
+        headers = build_upload_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(
+            headers["Authorization"],
+            "Bearer MySecretToken123",
+            "{token} should be replaced with the token value",
+        )
+        self.assertEqual(headers["X-Atlassian-Token"], "no-check")
+
 
 class TestUploadViaRestHTTPHeaders(unittest.TestCase):
     """Test that upload_via_rest sends correct HTTP headers."""
@@ -1334,12 +1360,12 @@ class TestExecuteUploadMcptype(unittest.TestCase):
             patch("server.server.resolve_token") as mock_resolve_token,
             patch("server.server.resolve_extra_secrets") as mock_resolve_extra_secrets,
             patch("server.server.get_attachment_upload_config") as mock_get_config,
+            patch("server.server.get_env_vars_for_mcptype") as mock_get_env_vars,
             patch("server.server.upload_via_rest") as mock_upload_via_rest,
         ):
             mock_resolve_token.return_value = "resolved_secret_token"
-            mock_resolve_extra_secrets.return_value = {
-                "ATLASSIAN_TOKEN": "gloves_token_123"
-            }
+            mock_resolve_extra_secrets.return_value = {}
+            mock_get_env_vars.return_value = ["CONFLUENCE_API_TOKEN"]
             mock_upload_via_rest.return_value = {"success": True}
 
             mock_get_config.return_value = {
@@ -1347,7 +1373,7 @@ class TestExecuteUploadMcptype(unittest.TestCase):
                 "method": "POST",
                 "url_template": "https://example.com/rest/api/content/{page_id}/child/attachment",
                 "headers": {
-                    "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+                    "Authorization": "Bearer ${CONFLUENCE_API_TOKEN}",
                     "X-Atlassian-Token": "no-check",
                 },
             }
@@ -1382,6 +1408,20 @@ class TestExecuteUploadMcptype(unittest.TestCase):
                 mcptype_passed_to_resolve,
                 "confluence",
                 "mcptype should be 'confluence' as passed explicitly",
+            )
+
+            upload_call_args = mock_upload_via_rest.call_args
+            extra_secrets_passed = upload_call_args[0][6]
+            print(f"extra_secrets passed to upload_via_rest: {extra_secrets_passed}")
+            self.assertIn(
+                "CONFLUENCE_API_TOKEN",
+                extra_secrets_passed,
+                "primary token should be added to extra_secrets as CONFLUENCE_API_TOKEN",
+            )
+            self.assertEqual(
+                extra_secrets_passed["CONFLUENCE_API_TOKEN"],
+                "resolved_secret_token",
+                "primary token should be stored under CONFLUENCE_API_TOKEN key",
             )
 
     def test_handle_upload_attachment_passes_mcptype_to_execute(self):

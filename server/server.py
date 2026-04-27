@@ -960,6 +960,8 @@ def build_upload_headers(
             value = value.replace(
                 "{basic_auth}", base64.b64encode(auth_string.encode()).decode()
             )
+        if token and "{token}" in value:
+            value = value.replace("{token}", token)
         for match in re.finditer(r"\$\{([^}]+)\}", value):
             env_name = match.group(1)
             env_value = extra_secrets.get(env_name, os.environ.get(env_name, ""))
@@ -988,13 +990,14 @@ def upload_via_rest(
     )
     headers = build_upload_headers(headers_template, token, extra_secrets, args)
 
-    parsed_url = urllib.parse.urlparse(url)
     logger.debug(
-        "upload_via_rest: method=%s, url=%s, headers=%s",
-        method,
-        url,
+        "upload_via_rest: token=%s, extra_secrets_keys=%s, headers=%s",
+        mask_token(token),
+        list(extra_secrets.keys()),
         mask_headers_for_log(headers),
     )
+
+    parsed_url = urllib.parse.urlparse(url)
 
     conn = http.client.HTTPSConnection(
         parsed_url.netloc,
@@ -1700,6 +1703,20 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         """Execute upload based on type. Returns upload result."""
         token = resolve_token(mcptype, agent_id, agent_key)
         extra_secrets = resolve_extra_secrets(mcptype, agent_id, agent_key)
+        # Add primary token to extra_secrets so ${ENV_VAR} can reference it
+        env_vars = get_env_vars_for_mcptype(mcptype)
+        if isinstance(env_vars, list) and len(env_vars) > 0 and token:
+            extra_secrets[env_vars[0]] = token
+        logger.debug(
+            "_execute_upload: mcptype=%s, agent_id=%s, upload_type=%s, "
+            "token_resolved=%s, extra_secrets_keys=%s, env_vars=%s",
+            mcptype,
+            agent_id,
+            upload_type,
+            bool(token),
+            list(extra_secrets.keys()),
+            env_vars,
+        )
 
         if upload_type == "rest_api":
             return upload_via_rest(
