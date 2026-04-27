@@ -1338,6 +1338,45 @@ class TestUploadViaRestHTTPHeaders(unittest.TestCase):
             )
             self.assertEqual(auth_value, "Bearer MySecretToken123")
 
+    def test_upload_via_rest_handles_connection_reset(self):
+        import io
+        from unittest.mock import MagicMock, patch
+        from server.server import upload_via_rest, MCPToolError
+
+        config = {
+            "method": "POST",
+            "url_template": "https://example.com/rest/api/content/{page_id}/child/attachment",
+            "headers": {
+                "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+                "X-Atlassian-Token": "no-check",
+            },
+        }
+        args = {"page_id": "12345", "name": "test.md"}
+        file_stream = io.BytesIO(b"test content")
+        filename = "test.md"
+        content_type = "application/octet-stream"
+        token = "primary_token"
+        extra_secrets = {"ATLASSIAN_TOKEN": "MySecretToken123"}
+
+        mock_conn = MagicMock()
+        mock_conn.send.return_value = None
+        mock_conn.send.side_effect = ConnectionResetError(
+            "[Errno 104] Connection reset by peer"
+        )
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            with self.assertRaises(MCPToolError) as context:
+                upload_via_rest(
+                    config,
+                    args,
+                    file_stream,
+                    filename,
+                    content_type,
+                    token,
+                    extra_secrets,
+                )
+            self.assertIn("Connection reset", str(context.exception))
+
 
 class TestExecuteUploadMcptype(unittest.TestCase):
     """Test that _execute_upload correctly uses mcptype for token resolution."""

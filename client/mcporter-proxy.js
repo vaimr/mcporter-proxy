@@ -13,6 +13,7 @@ const DOWNLOAD_PATH = "/download-attachment";
 const UPLOAD_PATH = "/upload-attachment";
 const LIST_PATH = "/list";
 const TIMEOUT_MS = parseInt(process.env.MCPORTER_PROXY_TIMEOUT || "120000", 10);
+const UPLOAD_TIMEOUT_MS = parseInt(process.env.MCPORTER_PROXY_UPLOAD_TIMEOUT || "600000", 10);
 const MAX_RETRIES = parseInt(process.env.MCPORTER_PROXY_RETRIES || "2", 10);
 const RETRY_DELAY_MS = parseInt(process.env.MCPORTER_PROXY_RETRY_DELAY || "1000", 10);
 const LOG_LEVEL = (process.env.MCPORTER_PROXY_LOG_LEVEL || "info").toUpperCase();
@@ -353,7 +354,7 @@ async function proxyUploadRequest(mcptype, args, filePath, contentType) {
       "X-Target-Platform": mcptype,
       "X-Target-Args": Buffer.from(JSON.stringify(args)).toString("base64"),
     },
-    timeout: TIMEOUT_MS,
+    timeout: UPLOAD_TIMEOUT_MS,
   };
 
   return new Promise((resolve, reject) => {

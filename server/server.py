@@ -1031,10 +1031,14 @@ def upload_via_rest(
     conn.putheader("Content-Length", str(body_size))
     conn.endheaders()
 
-    conn.send(header)
-    for chunk in temp_buffer:
-        conn.send(chunk)
-    conn.send(footer)
+    try:
+        conn.send(header)
+        for chunk in temp_buffer:
+            conn.send(chunk)
+        conn.send(footer)
+    except (ConnectionResetError, BrokenPipeError, OSError) as e:
+        conn.close()
+        raise MCPToolError(f"Upload failed: connection error during send: {e}")
 
     response = conn.getresponse()
     response_body = response.read().decode("utf-8", errors="replace")
@@ -1624,7 +1628,10 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             )
         except (ConnectionResetError, BrokenPipeError, OSError, MCPToolError) as e:
             logger.error("Upload failed: %s", e)
-            self.send_error(502, f"Upload failed: {str(e)}")
+            try:
+                self.send_error(502, f"Upload failed: {str(e)}")
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                logger.debug("Client disconnected before error response could be sent")
 
     def _validate_upload_auth(self):
         """Validate auth headers for upload. Returns (valid, auth_key, agent_id, agent_key)."""
