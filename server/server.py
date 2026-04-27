@@ -654,6 +654,16 @@ def download_via_rest(
     body_template = config.get("body_template")
 
     url = substitute_template(url_template, args)
+    # Check for unsubstituted placeholders and warn
+    unsubstituted = re.findall(r"\\{[a-zA-Z_][a-zA-Z0-9_]*\\}", url)
+    if unsubstituted:
+        logger.warning(
+            "download_via_rest: unsubstituted placeholders in URL: %s. "
+            "Provided args: %s. URL: %s",
+            unsubstituted,
+            list(args.keys()),
+            url,
+        )
     headers = build_headers(headers_template, token, extra_secrets, args)
 
     body = None
@@ -1726,7 +1736,7 @@ def inject_attachment_tools(data: Any, include_schema: bool = True) -> None:
 
 
 def add_attachment_tools_to_server(
-        server: Dict[str, Any], include_schema: bool = True
+    server: Dict[str, Any], include_schema: bool = True
 ) -> None:
     name = server.get("name")
     if not name:
@@ -1750,6 +1760,7 @@ def add_attachment_tools_to_server(
         tools.append(upload_tool)
 
     server["tools"] = tools
+
 
 def main():
     import signal
