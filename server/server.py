@@ -37,9 +37,20 @@ logger = logging.getLogger("mcporter-proxy")
 def mask_token(token: Optional[str]) -> str:
     if not token:
         return "<none>"
-    if len(token) <= 8:
-        return "*" * len(token)
-    return f"{token[:4]}...{token[-4:]}"
+    prefix = "Bearer "
+    if token.startswith(prefix):
+        token_part = token[len(prefix) :]
+        if len(token_part) <= 12:
+            return prefix + "*" * len(token_part)
+        prefix_len = min(6, len(token_part) - 10)
+        suffix_len = 8
+        return f"{prefix}{token_part[:prefix_len]}...{token_part[-suffix_len:]}"
+    token_len = len(token)
+    if token_len <= 12:
+        return "*" * token_len
+    prefix_len = min(6, token_len - 10)
+    suffix_len = 8
+    return f"{token[:prefix_len]}...{token[-suffix_len:]}"
 
 
 def mask_headers_for_log(headers: Dict[str, str]) -> Dict[str, str]:
@@ -940,9 +951,7 @@ def build_upload_headers(
 ) -> Dict[str, str]:
     headers = {}
     for key, template in headers_template.items():
-        value = substitute_template(
-            template, {**args, "token": token or "", **extra_secrets}
-        )
+        value = template
         if "{basic_auth}" in value:
             email = extra_secrets.get("email", "") or extra_secrets.get(
                 "JIRA_EMAIL", ""
@@ -951,6 +960,12 @@ def build_upload_headers(
             value = value.replace(
                 "{basic_auth}", base64.b64encode(auth_string.encode()).decode()
             )
+        for match in re.finditer(r"\$\{([^}]+)\}", value):
+            env_name = match.group(1)
+            env_value = extra_secrets.get(env_name, os.environ.get(env_name, ""))
+            value = value.replace(f"${{{env_name}}}", env_value)
+        for arg_key, arg_val in args.items():
+            value = value.replace(f"{{{arg_key}}}", str(arg_val))
         headers[key] = value
     return headers
 
@@ -974,6 +989,13 @@ def upload_via_rest(
     headers = build_upload_headers(headers_template, token, extra_secrets, args)
 
     parsed_url = urllib.parse.urlparse(url)
+    logger.debug(
+        "upload_via_rest: method=%s, url=%s, headers=%s",
+        method,
+        url,
+        mask_headers_for_log(headers),
+    )
+
     conn = http.client.HTTPSConnection(
         parsed_url.netloc,
         timeout=UPSTREAM_TIMEOUT,
@@ -982,8 +1004,12 @@ def upload_via_rest(
     conn.putrequest(method, parsed_url.path, skip_host=True)
     if parsed_url.query:
         conn.putheader("X-Original-URI", f"{parsed_url.path}?{parsed_url.query}")
+    # Set Host header explicitly since skip_host=True skips it
+    conn.putheader("Host", parsed_url.netloc)
     for k, v in headers.items():
-        conn.putheader(k, v)
+        if k.lower() != "content-type":
+            # Content-Type will be set below for multipart
+            conn.putheader(k, v)
 
     boundary = "----McporterUploadBoundary"
     header = f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\nContent-Type: {content_type}\r\n\r\n'.encode()
@@ -1551,6 +1577,10 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 logger.debug("Client disconnected before error response could be sent")
 
     def _handle_upload_attachment(self):
+        logger.debug(
+            "_handle_upload_attachment: headers=%s",
+            dict(self.headers),
+        )
         auth_valid, auth_key, agent_id, agent_key = self._validate_upload_auth()
         if not auth_valid:
             return
@@ -1562,6 +1592,12 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         mcptype, args = self._parse_upload_target_args()
         if not mcptype:
             return
+
+        logger.debug(
+            "_handle_upload_attachment: mcptype=%s, args=%s",
+            mcptype,
+            args,
+        )
 
         config = get_attachment_upload_config(mcptype)
         if not config:
@@ -1579,7 +1615,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
 
         try:
             result = self._execute_upload(
-                upload_type, config, args, file_stream, agent_id, agent_key
+                upload_type, config, args, file_stream, agent_id, agent_key, mcptype
             )
             self._send_upload_response(
                 result, args.get("name") or args.get("filename", "upload")
@@ -1659,13 +1695,11 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         return file_stream
 
     def _execute_upload(
-        self, upload_type, config, args, file_stream, agent_id, agent_key
+        self, upload_type, config, args, file_stream, agent_id, agent_key, mcptype
     ):
         """Execute upload based on type. Returns upload result."""
-        token = resolve_token(args.get("mcptype", ""), agent_id, agent_key)
-        extra_secrets = resolve_extra_secrets(
-            args.get("mcptype", ""), agent_id, agent_key
-        )
+        token = resolve_token(mcptype, agent_id, agent_key)
+        extra_secrets = resolve_extra_secrets(mcptype, agent_id, agent_key)
 
         if upload_type == "rest_api":
             return upload_via_rest(

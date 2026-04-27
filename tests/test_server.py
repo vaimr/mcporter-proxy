@@ -1161,6 +1161,292 @@ class TestBuildHeaders(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+class TestBuildUploadHeaders(unittest.TestCase):
+    """Test build_upload_headers function with ${ENV_VAR} syntax for Atlassian."""
+
+    def test_build_upload_headers_with_env_var_syntax(self):
+        from server.server import build_upload_headers
+
+        headers_template = {
+            "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+            "X-Atlassian-Token": "no-check",
+        }
+        token = "primary_token"
+        extra_secrets = {"ATLASSIAN_TOKEN": "resolved_token_from_gloves"}
+        args = {}
+
+        headers = build_upload_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["Authorization"], "Bearer resolved_token_from_gloves")
+        self.assertEqual(headers["X-Atlassian-Token"], "no-check")
+
+    def test_build_upload_headers_preserves_bearer_prefix(self):
+        from server.server import build_upload_headers
+
+        headers_template = {"Authorization": "Bearer ${ATLASSIAN_TOKEN}"}
+        token = "secret"
+        extra_secrets = {"ATLASSIAN_TOKEN": "my_api_token"}
+        args = {}
+
+        headers = build_upload_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["Authorization"], "Bearer my_api_token")
+        self.assertTrue(headers["Authorization"].startswith("Bearer "))
+
+    def test_build_upload_headers_with_multiple_env_vars(self):
+        from server.server import build_upload_headers
+
+        headers_template = {
+            "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+            "X-Custom": "Token1=${TOKEN_1}, Token2=${TOKEN_2}",
+        }
+        token = "primary_token"
+        extra_secrets = {
+            "ATLASSIAN_TOKEN": "token1",
+            "TOKEN_1": "extra1",
+            "TOKEN_2": "extra2",
+        }
+        args = {}
+
+        headers = build_upload_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["Authorization"], "Bearer token1")
+        self.assertEqual(headers["X-Custom"], "Token1=extra1, Token2=extra2")
+
+    def test_build_upload_headers_env_var_fallback_to_os_environ(self):
+        import os
+        from server.server import build_upload_headers
+
+        os.environ["TEST_OS_VAR"] = "os_value"
+        headers_template = {"X-Test": "Value=${TEST_OS_VAR}"}
+        token = "token"
+        extra_secrets = {}
+        args = {}
+
+        headers = build_upload_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["X-Test"], "Value=os_value")
+        del os.environ["TEST_OS_VAR"]
+
+    def test_build_upload_headers_with_args_substitution(self):
+        from server.server import build_upload_headers
+
+        headers_template = {"X-Filename": "{filename}"}
+        token = "token"
+        extra_secrets = {}
+        args = {"filename": "report.pdf"}
+
+        headers = build_upload_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["X-Filename"], "report.pdf")
+
+    def test_build_upload_headers_with_page_id(self):
+        from server.server import build_upload_headers
+
+        headers_template = {
+            "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+            "X-Page-Id": "{page_id}",
+        }
+        token = "secret"
+        extra_secrets = {"ATLASSIAN_TOKEN": "atlassian_token_123"}
+        args = {"page_id": "217090082", "name": "test.md"}
+
+        headers = build_upload_headers(headers_template, token, extra_secrets, args)
+        self.assertEqual(headers["Authorization"], "Bearer atlassian_token_123")
+        self.assertEqual(headers["X-Page-Id"], "217090082")
+
+    def test_build_upload_headers_basic_auth(self):
+        from server.server import build_upload_headers
+
+        headers_template = {"Authorization": "Basic {basic_auth}"}
+        token = "api_token"
+        extra_secrets = {"email": "user@example.com"}
+        args = {}
+
+        headers = build_upload_headers(headers_template, token, extra_secrets, args)
+        import base64
+
+        expected = base64.b64encode(b"user@example.com:api_token").decode()
+        self.assertEqual(headers["Authorization"], f"Basic {expected}")
+
+
+class TestUploadViaRestHTTPHeaders(unittest.TestCase):
+    """Test that upload_via_rest sends correct HTTP headers."""
+
+    def test_upload_via_rest_sends_bearer_prefix(self):
+        import io
+        from unittest.mock import MagicMock, patch
+        from server.server import upload_via_rest
+
+        config = {
+            "method": "POST",
+            "url_template": "https://example.com/rest/api/content/{page_id}/child/attachment",
+            "headers": {
+                "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+                "X-Atlassian-Token": "no-check",
+            },
+        }
+        args = {"page_id": "12345", "name": "test.md"}
+        file_stream = io.BytesIO(b"test content")
+        filename = "test.md"
+        content_type = "application/octet-stream"
+        token = "primary_token"
+        extra_secrets = {"ATLASSIAN_TOKEN": "MySecretToken123"}
+
+        mock_conn = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.reason = "OK"
+        mock_response.read.side_effect = [b'{"success": true}', b""]
+        mock_response.getheader.return_value = "application/json"
+        mock_conn.getresponse.return_value = mock_response
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            upload_via_rest(
+                config, args, file_stream, filename, content_type, token, extra_secrets
+            )
+
+            putheader_calls = {
+                c[0][0].lower(): c[0][1] for c in mock_conn.putheader.call_args_list
+            }
+            self.assertIn("authorization", putheader_calls)
+            auth_value = putheader_calls["authorization"]
+            self.assertTrue(
+                auth_value.startswith("Bearer "),
+                f"Authorization should start with 'Bearer ', got: {auth_value}",
+            )
+            self.assertEqual(auth_value, "Bearer MySecretToken123")
+
+
+class TestExecuteUploadMcptype(unittest.TestCase):
+    """Test that _execute_upload correctly uses mcptype for token resolution."""
+
+    def test_execute_upload_mcptype_is_not_in_args(self):
+        args = {"page_id": "217090082", "name": "test.md"}
+        mcptype_from_args = args.get("mcptype", "")
+        print(f"mcptype from args: {repr(mcptype_from_args)}")
+        self.assertEqual(
+            mcptype_from_args,
+            "",
+            "args does NOT contain 'mcptype' key - it's only in the headers, not in X-Target-Args",
+        )
+
+    def test_execute_upload_resolves_token_with_correct_mcptype(self):
+        from unittest.mock import MagicMock, patch
+        import io
+
+        with (
+            patch("server.server.resolve_token") as mock_resolve_token,
+            patch("server.server.resolve_extra_secrets") as mock_resolve_extra_secrets,
+            patch("server.server.get_attachment_upload_config") as mock_get_config,
+            patch("server.server.upload_via_rest") as mock_upload_via_rest,
+        ):
+            mock_resolve_token.return_value = "resolved_secret_token"
+            mock_resolve_extra_secrets.return_value = {
+                "ATLASSIAN_TOKEN": "gloves_token_123"
+            }
+            mock_upload_via_rest.return_value = {"success": True}
+
+            mock_get_config.return_value = {
+                "type": "rest_api",
+                "method": "POST",
+                "url_template": "https://example.com/rest/api/content/{page_id}/child/attachment",
+                "headers": {
+                    "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+                    "X-Atlassian-Token": "no-check",
+                },
+            }
+
+            from server.server import MCPorterProxyHandler
+
+            handler = MagicMock(spec=MCPorterProxyHandler)
+            handler._execute_upload = MCPorterProxyHandler._execute_upload.__get__(
+                handler, MCPorterProxyHandler
+            )
+
+            config = mock_get_config.return_value
+            args = {"page_id": "217090082", "name": "test.md"}
+            file_stream = io.BytesIO(b"test file content")
+            agent_id = "test-agent"
+            agent_key = "test-key"
+
+            handler._execute_upload(
+                "rest_api", config, args, file_stream, agent_id, agent_key, "confluence"
+            )
+
+            resolve_token_call = mock_resolve_token.call_args
+            mcptype_passed_to_resolve = resolve_token_call[0][0]
+            print(f"mcptype passed to resolve_token: {repr(mcptype_passed_to_resolve)}")
+
+            self.assertNotEqual(
+                mcptype_passed_to_resolve,
+                "",
+                "mcptype should not be empty - it should be 'confluence' or similar, not args.get('mcptype', '')",
+            )
+            self.assertEqual(
+                mcptype_passed_to_resolve,
+                "confluence",
+                "mcptype should be 'confluence' as passed explicitly",
+            )
+
+    def test_handle_upload_attachment_passes_mcptype_to_execute(self):
+        from unittest.mock import MagicMock, patch, PropertyMock
+
+        with (
+            patch("server.server.resolve_token") as mock_resolve_token,
+            patch("server.server.resolve_extra_secrets") as mock_resolve_extra_secrets,
+            patch("server.server.get_attachment_upload_config") as mock_get_config,
+            patch("server.server.upload_via_rest") as mock_upload_via_rest,
+        ):
+            mock_resolve_token.return_value = "resolved_secret_token"
+            mock_resolve_extra_secrets.return_value = {
+                "ATLASSIAN_TOKEN": "gloves_token_123"
+            }
+            mock_upload_via_rest.return_value = {"success": True}
+
+            mock_get_config.return_value = {
+                "type": "rest_api",
+                "method": "POST",
+                "url_template": "https://example.com/rest/api/content/{page_id}/child/attachment",
+                "headers": {
+                    "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+                    "X-Atlassian-Token": "no-check",
+                },
+            }
+
+            from server.server import MCPorterProxyHandler
+
+            handler = MagicMock(spec=MCPorterProxyHandler)
+            handler._execute_upload = MCPorterProxyHandler._execute_upload.__get__(
+                handler, MCPorterProxyHandler
+            )
+
+            args = {"page_id": "217090082", "name": "test.md"}
+            file_stream = io.BytesIO(b"test file content")
+            agent_id = "test-agent"
+            agent_key = "test-key"
+
+            handler._execute_upload(
+                "rest_api",
+                mock_get_config.return_value,
+                args,
+                file_stream,
+                agent_id,
+                agent_key,
+                "confluence",
+            )
+
+            resolve_token_call = mock_resolve_token.call_args
+            mcptype_passed = resolve_token_call[0][0] if resolve_token_call else None
+            print(f"DEBUG: mcptype passed to resolve_token: {repr(mcptype_passed)}")
+            self.assertIsNotNone(
+                mcptype_passed, "resolve_token should have been called"
+            )
+            self.assertNotEqual(
+                mcptype_passed, "", "mcptype should not be empty string"
+            )
+            self.assertEqual(
+                mcptype_passed,
+                "confluence",
+                "mcptype should be explicitly passed as 'confluence'",
+            )
+
+
 class TestSchemaEndpoint(unittest.TestCase):
     def test_parse_mcporter_schema_output_basic(self):
         from server.server import _parse_mcporter_schema_output
@@ -1831,3 +2117,174 @@ exit 0
         self.assertIn("atlassian.attachment_download", body)
         self.assertIn("atlassian.attachment_upload", body)
         self.assertIn("page_id", body)
+
+
+class TestUploadAttachment(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        test_config = {
+            "atlassian": {
+                "env": ["ATLASSIAN_API_TOKEN"],
+                "attachment_upload": {
+                    "type": "rest_api",
+                    "method": "POST",
+                    "url_template": "https://conf.devsun.ru/rest/api/content/{page_id}/child/attachment",
+                    "headers": {
+                        "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+                        "X-Atlassian-Token": "no-check",
+                    },
+                },
+            },
+        }
+        cls.temp_env_map = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        )
+        json.dump(test_config, cls.temp_env_map)
+        cls.temp_env_map.close()
+
+        import importlib
+        import server.server
+
+        importlib.reload(server.server)
+
+        cls.mock_dir = tempfile.mkdtemp()
+        cls.mock_mcporter_path = os.path.join(cls.mock_dir, "mcporter")
+        with open(cls.mock_mcporter_path, "w") as f:
+            f.write("""#!/bin/bash
+echo '{"result": "mock"}'
+exit 0
+""")
+        os.chmod(cls.mock_mcporter_path, 0o755)
+
+        cls.mock_gloves_path = os.path.join(cls.mock_dir, "gloves")
+        with open(cls.mock_gloves_path, "w") as f:
+            f.write("""#!/bin/bash
+if [[ "$*" == *"get"* ]]; then
+    echo "test_token_123"
+fi
+exit 0
+""")
+        os.chmod(cls.mock_gloves_path, 0o755)
+
+        cls.env = os.environ.copy()
+        cls.env["PATH"] = cls.mock_dir + ":" + os.environ.get("PATH", "")
+        cls.env["MCPORTER_PROXY_PORT"] = str(9906)
+        cls.env["MCPORTER_PROXY_ALLOWED_TOOLS"] = "*"
+        cls.env["MCPORTER_PROXY_LOG_LEVEL"] = "DEBUG"
+        cls.env["MCP_ENV_MAP_PATH"] = cls.temp_env_map.name
+        cls.server_process = subprocess.Popen(
+            [sys.executable, SERVER_SCRIPT],
+            env=cls.env,
+        )
+        time.sleep(0.5)
+        if cls.server_process.poll() is not None:
+            raise RuntimeError("Server failed to start")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server_process.terminate()
+        cls.server_process.wait()
+        os.unlink(cls.mock_mcporter_path)
+        os.unlink(cls.mock_gloves_path)
+        os.rmdir(cls.mock_dir)
+        os.unlink(cls.temp_env_map.name)
+        import importlib
+        import server.server
+
+        importlib.reload(server.server)
+
+    def test_upload_requires_auth(self):
+        conn = HTTPConnection("localhost", 9906)
+        body = b'--simpleboundary\r\nContent-Disposition: form-data; name="file"; filename="test.txt"\r\nContent-Type: text/plain\r\n\r\nHello World\r\n--simpleboundary--\r\n'
+        conn.request(
+            "POST",
+            "/upload-attachment",
+            body=body,
+            headers={
+                "Content-Type": "multipart/form-data; boundary=simpleboundary",
+                "Content-Length": str(len(body)),
+            },
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 401)
+        conn.close()
+
+    def test_upload_missing_x_target_platform(self):
+        conn = HTTPConnection("localhost", 9906)
+        body = b'--simpleboundary\r\nContent-Disposition: form-data; name="file"; filename="test.txt"\r\nContent-Type: text/plain\r\n\r\nHello World\r\n--simpleboundary--\r\n'
+        conn.request(
+            "POST",
+            "/upload-attachment",
+            body=body,
+            headers={
+                "Content-Type": "multipart/form-data; boundary=simpleboundary",
+                "Content-Length": str(len(body)),
+                "X-MCP-Auth-Key": "agent-key",
+            },
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 400)
+        conn.close()
+
+    def test_upload_success(self):
+        from unittest.mock import patch, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.reason = "OK"
+        mock_response.read.side_effect = [
+            b'{"id": "123", "url": "https://example.com/file"}',
+            b"",
+        ]
+        mock_response.getheader.side_effect = lambda name, default=None: {
+            "Content-Type": "application/json",
+        }.get(name, default)
+
+        mock_conn = MagicMock()
+        mock_conn.getresponse.return_value = mock_response
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            conn = HTTPConnection("localhost", 9906)
+            body = b'--simpleboundary\r\nContent-Disposition: form-data; name="file"; filename="test.txt"\r\nContent-Type: text/plain\r\n\r\nHello World\r\n--simpleboundary--\r\n'
+            conn.request(
+                "POST",
+                "/upload-attachment",
+                body=body,
+                headers={
+                    "Content-Type": "multipart/form-data; boundary=simpleboundary",
+                    "Content-Length": str(len(body)),
+                    "X-MCP-Auth-Key": "agent-key",
+                    "X-Target-Platform": "atlassian",
+                    "X-Target-Args": json.dumps(
+                        {"page_id": "217090082", "name": "test.md"}
+                    ),
+                },
+            )
+            resp = conn.getresponse()
+            self.assertEqual(
+                resp.status,
+                200,
+                f"Expected 200, got {resp.status}: {resp.read().decode('utf-8', errors='replace')}",
+            )
+            conn.close()
+
+    def test_upload_missing_file_in_multipart(self):
+        conn = HTTPConnection("localhost", 9906)
+        body = b'--simpleboundary\r\nContent-Disposition: form-data; name="notfile"\r\n\r\nHello World\r\n--simpleboundary--\r\n'
+        conn.request(
+            "POST",
+            "/upload-attachment",
+            body=body,
+            headers={
+                "Content-Type": "multipart/form-data; boundary=simpleboundary",
+                "Content-Length": str(len(body)),
+                "X-MCP-Auth-Key": "agent-key",
+                "X-Target-Platform": "atlassian",
+                "X-Target-Args": json.dumps(
+                    {"page_id": "217090082", "name": "test.md"}
+                ),
+            },
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 400)
+        conn.close()
