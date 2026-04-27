@@ -351,7 +351,7 @@ async function proxyUploadRequest(mcptype, args, filePath, contentType) {
       "Content-Length": body.length,
       "X-MCP-Auth-Key": AUTH_KEY,
       "X-Target-Platform": mcptype,
-      "X-Target-Args": JSON.stringify(args),
+      "X-Target-Args": Buffer.from(JSON.stringify(args)).toString("base64"),
     },
     timeout: TIMEOUT_MS,
   };

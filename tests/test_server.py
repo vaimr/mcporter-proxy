@@ -1487,6 +1487,46 @@ class TestExecuteUploadMcptype(unittest.TestCase):
             )
 
 
+class TestParseUploadTargetArgs(unittest.TestCase):
+    def test_parse_upload_target_args_with_cyrillic_and_spaces(self):
+        import base64
+        from server.server import MCPorterProxyHandler
+
+        args_json = '{"page_id":217090082,"name":"Запись встречи 26.06.2025 14-08-21 - запись.webm"}'
+        args_b64 = base64.b64encode(args_json.encode()).decode()
+
+        mock_handler = MagicMock(spec=MCPorterProxyHandler)
+        mock_handler.headers = {
+            "X-Target-Platform": "atlassian",
+            "X-Target-Args": args_b64,
+        }
+
+        result = MCPorterProxyHandler._parse_upload_target_args(mock_handler)
+        mcptype, args = result
+
+        self.assertEqual(mcptype, "atlassian")
+        self.assertEqual(args["page_id"], 217090082)
+        self.assertEqual(
+            args["name"],
+            "Запись встречи 26.06.2025 14-08-21 - запись.webm",
+        )
+
+    def test_parse_upload_target_args_plain_json_still_works(self):
+        from server.server import MCPorterProxyHandler
+
+        mock_handler = MagicMock(spec=MCPorterProxyHandler)
+        mock_handler.headers = {
+            "X-Target-Platform": "github",
+            "X-Target-Args": '{"owner":"octocat","repo":"hello-world"}',
+        }
+
+        mcptype, args = MCPorterProxyHandler._parse_upload_target_args(mock_handler)
+
+        self.assertEqual(mcptype, "github")
+        self.assertEqual(args["owner"], "octocat")
+        self.assertEqual(args["repo"], "hello-world")
+
+
 class TestSchemaEndpoint(unittest.TestCase):
     def test_parse_mcporter_schema_output_basic(self):
         from server.server import _parse_mcporter_schema_output

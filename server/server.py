@@ -74,7 +74,7 @@ ENV_MAP_PATH = SCRIPT_DIR / "mcp_env_map.json"
 UPSTREAM_CONNECT_TIMEOUT = 10
 UPSTREAM_READ_TIMEOUT = 300
 UPSTREAM_TIMEOUT = max(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT)
-MAX_UPLOAD_SIZE = 100 * 1024 * 1024
+MAX_UPLOAD_SIZE = None
 BOUNDARY_BYTES = b"simpleboundary"
 MULTIPART_BOUNDARY = "simpleboundary"
 
@@ -1666,9 +1666,13 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         target_args_raw = self.headers.get("X-Target-Args", "{}")
         try:
             args = json.loads(target_args_raw)
-        except json.JSONDecodeError as e:
-            self.send_error(400, f"Invalid JSON in X-Target-Args: {e}")
-            return None, None
+        except json.JSONDecodeError:
+            try:
+                args_json = base64.b64decode(target_args_raw).decode("utf-8")
+                args = json.loads(args_json)
+            except Exception as e:
+                self.send_error(400, f"Invalid X-Target-Args: {e}")
+                return None, None
 
         if not isinstance(args, dict):
             self.send_error(400, "X-Target-Args must be a JSON object")
@@ -1683,7 +1687,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Empty body")
             return None
 
-        if content_length > MAX_UPLOAD_SIZE:
+        if MAX_UPLOAD_SIZE is not None and content_length > MAX_UPLOAD_SIZE:
             self.send_error(
                 413, f"Upload size {content_length} exceeds limit {MAX_UPLOAD_SIZE}"
             )
