@@ -143,7 +143,17 @@ async function proxyRequest(payload, path, options = {}) {
               log("INFO", `Downloaded to ${outputPath}`);
               resolve({ res, outputPath });
             });
-            writeStream.on("error", reject);
+            writeStream.on("error", (err) => {
+              let msg = err.message;
+              if (err.code === 'EACCES' || err.code === 'EPERM') {
+                msg = 'Permission denied';
+              } else if (err.code === 'ENOENT') {
+                msg = 'No such file or directory (check that parent directory exists)';
+              }
+              console.error(`Error writing to ${outputPath}: ${msg}`);
+              console.error(`Check that the directory exists and you have write permissions`);
+              reject(err);
+            });
           });
         } else {
           try {
@@ -173,6 +183,14 @@ async function proxyRequest(payload, path, options = {}) {
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
       }
     } catch (error) {
+      const isWriteError = error.code === 'EACCES' || error.code === 'EPERM' || error.code === 'ENOENT' || error.code === 'ENOTDIR';
+      if (isWriteError) {
+        log("ERROR", `Failed to write file: ${error.message}`);
+        if (attempt === MAX_RETRIES) {
+          console.error(`Failed to write to file - check path and permissions`);
+        }
+        break;
+      }
       log("ERROR", `Failed to connect: ${error.message}`);
       if (attempt === MAX_RETRIES) {
         console.error(`Failed to connect to proxy: ${error.message}`);

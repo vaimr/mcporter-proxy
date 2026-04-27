@@ -152,4 +152,19 @@ assert.ok(helpList.stdout.includes("--json"), "Help should show --json flag");
 assert.ok(helpList.stdout.includes("--schema"), "Help should show --schema flag");
 console.log("✅ Help includes list command documentation");
 
+console.log("\n=== Download Write Error Tests ===\n");
+
+console.log("Testing download with invalid output path (directory doesn't exist)...");
+// Use a temp file path that goes through pipe but encounters write error
+// The ENOENT will manifest when the directory part of the path doesn't exist
+const invalidDir = run([
+  "download", "github", "owner=octocat", "repo=test", "asset_id=123",
+  "--output", "/nonexistent_dir_12345/test.zip"
+], { MCPORTER_PROXY_AUTH_KEY: "agent-key" });
+// Should exit with error (either connection error or file write error)
+assert.strictEqual(invalidDir.status, 1, "Should exit with error");
+// Should have some error indication in stderr
+assert.ok(invalidDir.stderr.length > 0, "Should have error output");
+console.log("✅ Download with invalid output path shows error");
+
 console.log("\n✅ All tests passed.");

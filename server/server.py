@@ -1536,8 +1536,19 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
 
         except (ConnectionResetError, BrokenPipeError, OSError, MCPToolError) as e:
-            logger.error("Download failed: %s", e)
-            self.send_error(502, f"Download failed: {str(e)}")
+            if isinstance(e, BrokenPipeError):
+                logger.error(
+                    "Download failed: client disconnected (broken pipe). "
+                    "Likely cause: client could not write to destination file"
+                )
+            elif isinstance(e, ConnectionResetError):
+                logger.error("Download failed: connection reset by client")
+            else:
+                logger.error("Download failed: %s", e)
+            try:
+                self.send_error(502, f"Download failed: {str(e)}")
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                logger.debug("Client disconnected before error response could be sent")
 
     def _handle_upload_attachment(self):
         auth_valid, auth_key, agent_id, agent_key = self._validate_upload_auth()
