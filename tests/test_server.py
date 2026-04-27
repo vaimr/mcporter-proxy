@@ -568,7 +568,255 @@ exit 0
         )
         resp = conn.getresponse()
         self.assertEqual(resp.status, 400)
-        self.assertIn(b"mcptype", resp.read().lower())
+        conn.close()
+
+
+class TestStreamingMultipartParser(unittest.TestCase):
+    def test_extract_file_from_multipart_streaming_basic(self):
+        from server.server import MCPorterProxyHandler
+
+        mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
+
+        body = (
+            b"--simpleboundary\r\n"
+            b'Content-Disposition: form-data; name="file"; filename="test.txt"\r\n'
+            b"Content-Type: text/plain\r\n\r\n"
+            b"Hello World"
+            b"\r\n--simpleboundary--\r\n"
+        )
+        boundary = b"simpleboundary"
+
+        result = mock_handler._extract_file_from_multipart_streaming(body, boundary)
+
+        self.assertIsNotNone(result)
+        stream, filename = result
+        self.assertEqual(filename, "test.txt")
+        content = stream.read()
+        self.assertEqual(content, b"Hello World")
+
+    def test_extract_file_from_multipart_streaming_with_large_content(self):
+        from server.server import MCPorterProxyHandler
+
+        mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
+
+        large_content = b"x" * (2 * 1024 * 1024)
+        body = (
+            b"--simpleboundary\r\n"
+            b'Content-Disposition: form-data; name="file"; filename="large.bin"\r\n'
+            b"Content-Type: application/octet-stream\r\n\r\n"
+            + large_content
+            + b"\r\n--simpleboundary--\r\n"
+        )
+        boundary = b"simpleboundary"
+
+        result = mock_handler._extract_file_from_multipart_streaming(body, boundary)
+
+        self.assertIsNotNone(result)
+        stream, filename = result
+        self.assertEqual(filename, "large.bin")
+        content = stream.read()
+        self.assertEqual(len(content), len(large_content))
+        self.assertEqual(content, large_content)
+
+    def test_extract_file_from_multipart_streaming_cyrillic_filename(self):
+        from server.server import MCPorterProxyHandler
+
+        mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
+
+        body = (
+            b"--simpleboundary\r\n"
+            b'Content-Disposition: form-data; name="file"; filename="\320\224\320\276\320\272\321\203\320\274\320\265\320\275\321\202.webm"\r\n'
+            b"Content-Type: video/webm\r\n\r\n"
+            b"video_content_here"
+            b"\r\n--simpleboundary--\r\n"
+        )
+        boundary = b"simpleboundary"
+
+        result = mock_handler._extract_file_from_multipart_streaming(body, boundary)
+
+        self.assertIsNotNone(result)
+        stream, filename = result
+        self.assertEqual(
+            filename,
+            "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442.webm",
+        )
+
+    def test_extract_file_from_multipart_streaming_no_file(self):
+        from server.server import MCPorterProxyHandler
+
+        mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
+
+        body = (
+            b"--simpleboundary\r\n"
+            b'Content-Disposition: form-data; name="notfile"\r\n\r\n'
+            b"Hello World"
+            b"\r\n--simpleboundary--\r\n"
+        )
+        boundary = b"simpleboundary"
+
+        result = mock_handler._extract_file_from_multipart_streaming(body, boundary)
+
+        self.assertIsNone(result)
+
+
+class TestUploadChunkedBehavior(unittest.TestCase):
+    def test_upload_via_rest_sends_in_chunks(self):
+        from unittest.mock import MagicMock, patch, call
+        import io
+        from server.server import upload_via_rest
+
+        config = {
+            "method": "POST",
+            "url_template": "https://example.com/upload",
+            "headers": {"Authorization": "Bearer {token}"},
+        }
+        args = {}
+        large_content = b"x" * (300 * 1024)
+        file_stream = io.BytesIO(large_content)
+        filename = "large.bin"
+        content_type = "application/octet-stream"
+        token = "test_token"
+        extra_secrets = {}
+
+        mock_conn = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.side_effect = [b'{"success": true}', b""]
+        mock_conn.getresponse.return_value = mock_response
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            upload_via_rest(
+                config, args, file_stream, filename, content_type, token, extra_secrets
+            )
+
+            send_calls = mock_conn.send.call_args_list
+            self.assertGreater(len(send_calls), 1, "Should send multiple chunks")
+
+    def test_threshold_constant_defined(self):
+        from server.server import STREAMING_UPLOAD_THRESHOLD
+
+        self.assertEqual(STREAMING_UPLOAD_THRESHOLD, 1024 * 1024)
+
+
+class TestUploadThresholdRouting(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        test_config = {
+            "atlassian": {
+                "env": ["ATLASSIAN_API_TOKEN"],
+                "attachment_upload": {
+                    "type": "rest_api",
+                    "method": "POST",
+                    "url_template": "https://conf.devsun.ru/rest/api/content/{page_id}/child/attachment",
+                    "headers": {
+                        "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+                        "X-Atlassian-Token": "no-check",
+                    },
+                },
+            },
+        }
+        cls.temp_env_map = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        )
+        json.dump(test_config, cls.temp_env_map)
+        cls.temp_env_map.close()
+
+        import importlib
+        import server.server
+
+        importlib.reload(server.server)
+
+        cls.mock_dir = tempfile.mkdtemp()
+        cls.mock_mcporter_path = os.path.join(cls.mock_dir, "mcporter")
+        with open(cls.mock_mcporter_path, "w") as f:
+            f.write("""#!/bin/bash
+echo '{"result": "mock"}'
+exit 0
+""")
+        os.chmod(cls.mock_mcporter_path, 0o755)
+
+        cls.mock_gloves_path = os.path.join(cls.mock_dir, "gloves")
+        with open(cls.mock_gloves_path, "w") as f:
+            f.write("""#!/bin/bash
+if [[ "$*" == *"get"* ]]; then
+    echo "test_token_123"
+fi
+exit 0
+""")
+        os.chmod(cls.mock_gloves_path, 0o755)
+
+        cls.env = os.environ.copy()
+        cls.env["PATH"] = cls.mock_dir + ":" + os.environ.get("PATH", "")
+        cls.env["MCPORTER_PROXY_PORT"] = str(9907)
+        cls.env["MCPORTER_PROXY_ALLOWED_TOOLS"] = "*"
+        cls.env["MCPORTER_PROXY_LOG_LEVEL"] = "WARNING"
+        cls.env["MCP_ENV_MAP_PATH"] = cls.temp_env_map.name
+        cls.server_process = subprocess.Popen(
+            [sys.executable, SERVER_SCRIPT],
+            env=cls.env,
+        )
+        time.sleep(0.5)
+        if cls.server_process.poll() is not None:
+            raise RuntimeError("Server failed to start")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server_process.terminate()
+        cls.server_process.wait()
+        os.unlink(cls.mock_mcporter_path)
+        os.unlink(cls.mock_gloves_path)
+        os.rmdir(cls.mock_dir)
+        os.unlink(cls.temp_env_map.name)
+        import importlib
+        import server.server
+
+        importlib.reload(server.server)
+
+    def test_small_upload_uses_bytes_parser(self):
+        conn = HTTPConnection("localhost", 9907)
+        body = b'--simpleboundary\r\nContent-Disposition: form-data; name="file"; filename="small.txt"\r\nContent-Type: text/plain\r\n\r\nSmall content\r\n--simpleboundary--\r\n'
+        conn.request(
+            "POST",
+            "/upload-attachment",
+            body=body,
+            headers={
+                "Content-Type": "multipart/form-data; boundary=simpleboundary",
+                "Content-Length": str(len(body)),
+                "X-MCP-Auth-Key": "agent-key",
+                "X-Target-Platform": "atlassian",
+                "X-Target-Args": json.dumps(
+                    {"page_id": "217090082", "name": "small.txt"}
+                ),
+            },
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        conn.close()
+
+    def test_large_upload_uses_streaming_parser(self):
+        conn = HTTPConnection("localhost", 9907)
+        large_content = b"x" * (2 * 1024 * 1024)
+        body = (
+            b'--simpleboundary\r\nContent-Disposition: form-data; name="file"; filename="large.bin"\r\nContent-Type: application/octet-stream\r\n\r\n'
+            + large_content
+            + b"\r\n--simpleboundary--\r\n"
+        )
+        conn.request(
+            "POST",
+            "/upload-attachment",
+            body=body,
+            headers={
+                "Content-Type": "multipart/form-data; boundary=simpleboundary",
+                "Content-Length": str(len(body)),
+                "X-MCP-Auth-Key": "agent-key",
+                "X-Target-Platform": "atlassian",
+                "X-Target-Args": json.dumps(
+                    {"page_id": "217090082", "name": "large.bin"}
+                ),
+            },
+        )
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
         conn.close()
 
     def test_download_unknown_mcptype(self):

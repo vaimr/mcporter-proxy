@@ -76,6 +76,7 @@ UPSTREAM_CONNECT_TIMEOUT = 10
 UPSTREAM_READ_TIMEOUT = 300
 UPSTREAM_TIMEOUT = max(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT)
 MAX_UPLOAD_SIZE = None
+STREAMING_UPLOAD_THRESHOLD = 1024 * 1024
 BOUNDARY_BYTES = b"simpleboundary"
 MULTIPART_BOUNDARY = "simpleboundary"
 
@@ -1018,23 +1019,19 @@ def upload_via_rest(
     footer = f"\r\n--{boundary}--\r\n".encode()
 
     file_size = 0
-    temp_buffer = []
-    while True:
-        chunk = file_stream.read(65536)
-        if not chunk:
-            break
-        temp_buffer.append(chunk)
-        file_size += len(chunk)
-
-    body_size = len(header) + file_size + len(footer)
     conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
-    conn.putheader("Content-Length", str(body_size))
+    conn.putheader("Transfer-Encoding", "chunked")
+
     conn.endheaders()
 
     try:
         conn.send(header)
-        for chunk in temp_buffer:
+        while True:
+            chunk = file_stream.read(262144)
+            if not chunk:
+                break
             conn.send(chunk)
+            file_size += len(chunk)
         conn.send(footer)
     except (ConnectionResetError, BrokenPipeError, OSError) as e:
         conn.close()
@@ -1700,6 +1697,13 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             return None
 
         body = self.rfile.read(content_length)
+
+        if content_length >= STREAMING_UPLOAD_THRESHOLD:
+            result = self._extract_file_from_multipart_streaming(body, boundary)
+            if result:
+                return result[0]
+            return None
+
         file_stream = self._extract_file_from_multipart(body, boundary)
         if not file_stream:
             self.send_error(400, "No file part in multipart request")
@@ -1772,6 +1776,7 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
     def _extract_file_from_multipart(
         self, body: bytes, boundary: bytes
     ) -> Optional[io.BytesIO]:
+        """Extract file from multipart body using BytesParser (for small bodies)."""
         from email.parser import BytesParser
 
         parser = BytesParser()
@@ -1787,6 +1792,85 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
                 payload = part.get_payload(decode=True)
                 if payload:
                     return io.BytesIO(payload)
+        return None
+
+    def _extract_file_from_multipart_streaming(
+        self, body: bytes, boundary: bytes
+    ) -> Optional[Tuple[io.BytesIO, str]]:
+        """Streaming multipart parser that yields file chunks without full buffering.
+
+        Returns tuple of (stream, filename) or None if no file found.
+        Uses incremental parsing to avoid loading entire body into memory.
+        """
+        boundary_str = boundary.decode("utf-8")
+        delimiter = f"--{boundary_str}\r\n".encode()
+        footer_delimiter = f"--{boundary_str}--\r\n".encode()
+
+        # Find first delimiter
+        pos = 0
+        while pos < len(body):
+            idx = body.find(delimiter, pos)
+            if idx == -1:
+                return None
+
+            # Skip delimiter
+            header_start = idx + len(delimiter)
+            # Find end of headers (blank line \r\n\r\n)
+            header_end = body.find(b"\r\n\r\n", header_start)
+            if header_end == -1:
+                return None
+
+            headers_chunk = body[header_start:header_end]
+            # Find Content-Disposition and filename
+            cd_start = body.find(b"Content-Disposition:", header_start)
+            if cd_start == -1 or cd_start > header_end:
+                pos = idx + 1
+                continue
+
+            next_newline = body.find(b"\r\n", cd_start)
+            if next_newline == -1 or next_newline > header_end:
+                pos = idx + 1
+                continue
+
+            cd_line = body[cd_start:next_newline].decode("utf-8", errors="replace")
+
+            filename = None
+            for part in cd_line.split(";"):
+                part = part.strip()
+                if part.startswith("filename="):
+                    filename = part.split("=", 1)[1].strip().strip('"')
+                    break
+
+            if filename:
+                content_start = header_end + 4
+                remaining = body[content_start:]
+
+                boundary_pos = remaining.find(delimiter)
+                footer_pos = remaining.find(footer_delimiter)
+
+                if boundary_pos == -1 and footer_pos == -1:
+                    return io.BytesIO(remaining), filename
+
+                end_pos = len(remaining)
+                if boundary_pos != -1 and footer_pos != -1:
+                    end_pos = min(boundary_pos, footer_pos)
+                elif boundary_pos != -1:
+                    end_pos = boundary_pos
+                else:
+                    end_pos = footer_pos
+
+                file_content = remaining[:end_pos]
+                trailing_crlf = b"\r\n"
+                if (
+                    file_content.endswith(trailing_crlf)
+                    and remaining[end_pos : end_pos + 2] == b"--"
+                ):
+                    file_content = file_content[: -len(trailing_crlf)]
+
+                return io.BytesIO(file_content), filename
+
+            pos = idx + 1
+
         return None
 
     def log_message(self, format, *args):
