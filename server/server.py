@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import subprocess
 import tempfile
 import urllib.parse
@@ -25,6 +26,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from python_multipart.multipart import MultipartParser
+from requests_toolbelt import MultipartEncoder
 
 LOG_LEVEL = os.environ.get("MCPORTER_PROXY_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -76,9 +80,6 @@ UPSTREAM_CONNECT_TIMEOUT = 10
 UPSTREAM_READ_TIMEOUT = 300
 UPSTREAM_TIMEOUT = max(UPSTREAM_CONNECT_TIMEOUT, UPSTREAM_READ_TIMEOUT)
 MAX_UPLOAD_SIZE = None
-STREAMING_UPLOAD_THRESHOLD = 1024 * 1024
-BOUNDARY_BYTES = b"simpleboundary"
-MULTIPART_BOUNDARY = "simpleboundary"
 
 
 def get_env_map_path() -> Path:
@@ -919,23 +920,6 @@ def base64_a85_decode_stream(data: str):
     yield base64.b64decode(data)
 
 
-def generate_multipart(
-    stream, filename: str, content_type: str, boundary: str = "simpleboundary"
-):
-    yield f"--{boundary}\r\n".encode()
-    yield f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode()
-    yield f"Content-Type: {content_type}\r\n\r\n".encode()
-    if hasattr(stream, "read"):
-        while True:
-            chunk = stream.read(8192)
-            if not chunk:
-                break
-            yield chunk
-    else:
-        yield from stream
-    yield f"\r\n--{boundary}--\r\n".encode()
-
-
 def get_attachment_upload_config(mcptype: str) -> Optional[Dict[str, Any]]:
     config = MCP_ENV_MAP.get(mcptype)
     if not config:
@@ -972,6 +956,59 @@ def build_upload_headers(
             value = value.replace(f"{{{arg_key}}}", str(arg_val))
         headers[key] = value
     return headers
+
+
+class ChunkedFileReference:
+    def __init__(self, chunks: List[Tuple[bytes, int]], total_size: int):
+        self._chunks = chunks
+        self._total_size = total_size
+        self._position = 0
+        self._current_chunk_idx = 0
+        self._current_offset = 0
+
+    def __len__(self) -> int:
+        return self._total_size
+
+    def read(self, size: int = -1) -> bytes:
+        if self._position >= self._total_size:
+            return b""
+
+        result = bytearray()
+        while len(result) < size if size > 0 else True:
+            if self._current_chunk_idx >= len(self._chunks):
+                break
+
+            chunk_data, chunk_size = self._chunks[self._current_chunk_idx]
+            remaining_in_chunk = chunk_size - self._current_offset
+
+            if size > 0:
+                to_read = min(remaining_in_chunk, size - len(result))
+            else:
+                to_read = remaining_in_chunk
+
+            result.extend(
+                chunk_data[self._current_offset : self._current_offset + to_read]
+            )
+            self._position += to_read
+            self._current_offset += to_read
+
+            if self._current_offset >= chunk_size:
+                self._current_chunk_idx += 1
+                self._current_offset = 0
+
+            if size > 0 and len(result) >= size:
+                break
+
+        return bytes(result)
+
+    def read_chunk(self):
+        while self._current_chunk_idx < len(self._chunks):
+            chunk_data, chunk_size = self._chunks[self._current_chunk_idx]
+            data = chunk_data[self._current_offset : self._current_offset + chunk_size]
+            self._current_chunk_idx += 1
+            self._current_offset = 0
+            if data:
+                yield data
 
 
 def upload_via_rest(
@@ -1014,25 +1051,113 @@ def upload_via_rest(
         if k.lower() != "content-type":
             conn.putheader(k, v)
 
-    boundary = "----McporterUploadBoundary"
-    header = f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\nContent-Type: {content_type}\r\n\r\n'.encode()
-    footer = f"\r\n--{boundary}--\r\n".encode()
+    encoder = MultipartEncoder(fields={"file": (filename, file_stream, content_type)})
 
-    file_size = 0
-    conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+    encoded_body = encoder.read()
+    body_length = len(encoded_body)
+
+    conn.putheader("Content-Type", encoder.content_type)
+    conn.putheader("Content-Length", str(body_length))
+
+    conn.endheaders()
+
+    try:
+        conn.send(encoded_body)
+    except (ConnectionResetError, BrokenPipeError, OSError) as e:
+        conn.close()
+        raise MCPToolError(f"Upload failed: connection error during send: {e}")
+
+    response = conn.getresponse()
+    response_body = response.read().decode("utf-8", errors="replace")
+    conn.close()
+
+    if response.status >= 400:
+        raise MCPToolError(
+            f"Upload failed: {response.status} {response.reason}: {response_body[:500]}"
+        )
+
+    try:
+        result = json.loads(response_body)
+    except json.JSONDecodeError:
+        result = {"raw_response": response_body}
+
+    return result
+
+
+def upload_via_rest_streaming(
+    config: Dict[str, Any],
+    args: Dict[str, Any],
+    file_stream,
+    filename: str,
+    content_type: str,
+    token: Optional[str],
+    extra_secrets: Dict[str, str],
+) -> Dict[str, Any]:
+    method = config.get("method", "POST").upper()
+    url_template = config.get("url_template", "")
+    headers_template = config.get("headers", {})
+
+    url = substitute_template(
+        url_template, {**args, "token": token or "", **extra_secrets}
+    )
+    headers = build_upload_headers(headers_template, token, extra_secrets, args)
+
+    logger.debug(
+        "upload_via_rest_streaming: token=%s, extra_secrets_keys=%s, headers=%s",
+        mask_token(token),
+        list(extra_secrets.keys()),
+        mask_headers_for_log(headers),
+    )
+
+    parsed_url = urllib.parse.urlparse(url)
+
+    conn = http.client.HTTPSConnection(
+        parsed_url.netloc,
+        timeout=UPSTREAM_TIMEOUT,
+    )
+    conn.connect()
+    conn.putrequest(method, parsed_url.path, skip_host=True)
+    if parsed_url.query:
+        conn.putheader("X-Original-URI", f"{parsed_url.path}?{parsed_url.query}")
+    conn.putheader("Host", parsed_url.netloc)
+    for k, v in headers.items():
+        if k.lower() != "content-type":
+            conn.putheader(k, v)
+
+    boundary = secrets.token_hex(16)
+    content_type_header = f"multipart/form-data; boundary={boundary}"
+    conn.putheader("Content-Type", content_type_header)
     conn.putheader("Transfer-Encoding", "chunked")
 
     conn.endheaders()
 
     try:
-        conn.send(header)
+        header_chunk = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode("utf-8")
+        chunk_len = len(header_chunk)
+        conn.send(f"{chunk_len:x}\r\n".encode())
+        conn.send(header_chunk)
+
+        CHUNK_SIZE = 262144
         while True:
-            chunk = file_stream.read(262144)
-            if not chunk:
+            data = file_stream.read(CHUNK_SIZE)
+            if not data:
                 break
-            conn.send(chunk)
-            file_size += len(chunk)
-        conn.send(footer)
+            chunk_size = len(data)
+            conn.send(f"{chunk_size:x}\r\n".encode())
+            conn.send(data)
+            conn.send(b"\r\n")
+
+        footer = f"--{boundary}--\r\n"
+        footer_bytes = footer.encode()
+        conn.send(f"{len(footer_bytes):x}\r\n".encode())
+        conn.send(footer_bytes)
+        conn.send(b"\r\n")
+
+        conn.send(b"0\r\n\r\n")
     except (ConnectionResetError, BrokenPipeError, OSError) as e:
         conn.close()
         raise MCPToolError(f"Upload failed: connection error during send: {e}")
@@ -1697,19 +1822,12 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
             return None
 
         body = self.rfile.read(content_length)
-
-        if content_length >= STREAMING_UPLOAD_THRESHOLD:
-            result = self._extract_file_from_multipart_streaming(body, boundary)
-            if result:
-                return result[0]
-            return None
-
-        file_stream = self._extract_file_from_multipart(body, boundary)
-        if not file_stream:
+        result = self._extract_file_from_multipart(body, boundary)
+        if not result:
             self.send_error(400, "No file part in multipart request")
             return None
 
-        return file_stream
+        return result[0]
 
     def _execute_upload(
         self, upload_type, config, args, file_stream, agent_id, agent_key, mcptype
@@ -1733,6 +1851,9 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
         )
 
         if upload_type == "rest_api":
+            if hasattr(file_stream, "read_chunk"):
+                file_data = b"".join(file_stream.read_chunk())
+                file_stream = io.BytesIO(file_data)
             return upload_via_rest(
                 config,
                 args,
@@ -1775,103 +1896,75 @@ class MCPorterProxyHandler(BaseHTTPRequestHandler):
 
     def _extract_file_from_multipart(
         self, body: bytes, boundary: bytes
-    ) -> Optional[io.BytesIO]:
-        """Extract file from multipart body using BytesParser (for small bodies)."""
-        from email.parser import BytesParser
+    ) -> Optional[Tuple[ChunkedFileReference, str]]:
+        files = {}
+        current_filename = None
+        current_header_field = bytearray()
+        current_file_chunks = []
+        current_file_size = 0
 
-        parser = BytesParser()
-        msg = parser.parsebytes(
-            b"Content-Type: multipart/form-data; boundary="
-            + boundary
-            + b"\r\n\r\n"
-            + body
-        )
+        def on_part_begin():
+            nonlocal current_filename, current_file_chunks, current_file_size
+            current_filename = None
+            current_file_chunks = []
+            current_file_size = 0
 
-        for part in msg.walk():
-            if part.get_content_disposition() == "form-data" and part.get_filename():
-                payload = part.get_payload(decode=True)
-                if payload:
-                    return io.BytesIO(payload)
-        return None
+        def on_header_field(data, start, end):
+            nonlocal current_header_field
+            current_header_field.extend(data[start:end])
 
-    def _extract_file_from_multipart_streaming(
-        self, body: bytes, boundary: bytes
-    ) -> Optional[Tuple[io.BytesIO, str]]:
-        """Streaming multipart parser that yields file chunks without full buffering.
+        def on_header_value(data, start, end):
+            nonlocal current_filename, current_header_field
+            field = current_header_field.decode("utf-8", errors="replace")
+            value = data[start:end].decode("utf-8", errors="replace")
+            current_header_field = bytearray()
+            if field.lower() == "content-disposition" and "filename=" in value:
+                for part in value.split(";"):
+                    part = part.strip()
+                    if part.startswith("filename="):
+                        current_filename = part.split("=", 1)[1].strip().strip('"')
 
-        Returns tuple of (stream, filename) or None if no file found.
-        Uses incremental parsing to avoid loading entire body into memory.
-        """
-        boundary_str = boundary.decode("utf-8")
-        delimiter = f"--{boundary_str}\r\n".encode()
-        footer_delimiter = f"--{boundary_str}--\r\n".encode()
+        def on_header_end():
+            pass
 
-        # Find first delimiter
-        pos = 0
-        while pos < len(body):
-            idx = body.find(delimiter, pos)
-            if idx == -1:
-                return None
+        def on_headers_finished():
+            pass
 
-            # Skip delimiter
-            header_start = idx + len(delimiter)
-            # Find end of headers (blank line \r\n\r\n)
-            header_end = body.find(b"\r\n\r\n", header_start)
-            if header_end == -1:
-                return None
+        def on_part_data(data, start, end):
+            nonlocal current_file_size
+            if current_filename:
+                current_file_chunks.append((data, start, end))
+                current_file_size += end - start
 
-            headers_chunk = body[header_start:header_end]
-            # Find Content-Disposition and filename
-            cd_start = body.find(b"Content-Disposition:", header_start)
-            if cd_start == -1 or cd_start > header_end:
-                pos = idx + 1
-                continue
+        def on_part_end():
+            nonlocal current_filename, current_file_chunks, current_file_size, files
+            if current_filename:
+                files[current_filename] = (current_file_chunks, current_file_size)
 
-            next_newline = body.find(b"\r\n", cd_start)
-            if next_newline == -1 or next_newline > header_end:
-                pos = idx + 1
-                continue
+        def on_end():
+            pass
 
-            cd_line = body[cd_start:next_newline].decode("utf-8", errors="replace")
+        callbacks = {
+            "on_part_begin": on_part_begin,
+            "on_header_field": on_header_field,
+            "on_header_value": on_header_value,
+            "on_header_end": on_header_end,
+            "on_headers_finished": on_headers_finished,
+            "on_part_data": on_part_data,
+            "on_part_end": on_part_end,
+            "on_end": on_end,
+        }
 
-            filename = None
-            for part in cd_line.split(";"):
-                part = part.strip()
-                if part.startswith("filename="):
-                    filename = part.split("=", 1)[1].strip().strip('"')
-                    break
+        parser = MultipartParser(boundary, callbacks=callbacks)
+        parser.write(body)
+        parser.finalize()
 
-            if filename:
-                content_start = header_end + 4
-                remaining = body[content_start:]
+        if not files:
+            return None
 
-                boundary_pos = remaining.find(delimiter)
-                footer_pos = remaining.find(footer_delimiter)
-
-                if boundary_pos == -1 and footer_pos == -1:
-                    return io.BytesIO(remaining), filename
-
-                end_pos = len(remaining)
-                if boundary_pos != -1 and footer_pos != -1:
-                    end_pos = min(boundary_pos, footer_pos)
-                elif boundary_pos != -1:
-                    end_pos = boundary_pos
-                else:
-                    end_pos = footer_pos
-
-                file_content = remaining[:end_pos]
-                trailing_crlf = b"\r\n"
-                if (
-                    file_content.endswith(trailing_crlf)
-                    and remaining[end_pos : end_pos + 2] == b"--"
-                ):
-                    file_content = file_content[: -len(trailing_crlf)]
-
-                return io.BytesIO(file_content), filename
-
-            pos = idx + 1
-
-        return None
+        filename, (chunks, total_size) = next(iter(files.items()))
+        chunk_refs = [(data[start:end], end - start) for data, start, end in chunks]
+        return ChunkedFileReference(chunk_refs, total_size), filename
 
     def log_message(self, format, *args):
         pass

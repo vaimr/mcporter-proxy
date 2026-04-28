@@ -1,17 +1,18 @@
-.PHONY: build build-server build-client test test-all test-client test-skills mock-server mock-stop clean help
+.PHONY: build build-server build-client install test test-all test-client test-skills mock-server mock-stop clean help
 
 HELP := "\
 Available targets:\n\
-  build        - Build all components (server Docker image + client npm package)\n\
-  build-server - Build server Docker image\n\
-  build-client - Build client npm package\n\
-  test-all     - Run all tests (unit + integration) via unified test runner\n\
-  test         - Run all tests with mock server\n\
-  test-client  - Run client unit tests\n\
-  test-skills  - Run integration tests (requires real mcporter + external services)\n\
-  mock-start   - Start mock MCP server in background\n\
-  mock-stop    - Stop mock MCP server\n\
-  clean        - Remove build artifacts\n"
+  build         - Build all components (server Docker image + client npm package)\n\
+  build-server  - Build server Docker image\n\
+  build-client  - Build client npm package\n\
+  install       - Install server Python dependencies\n\
+  test-all      - Run all tests (unit + integration) via unified test runner\n\
+  test          - Run all tests with mock server\n\
+  test-client   - Run client unit tests\n\
+  test-skills   - Run integration tests (requires real mcporter + external services)\n\
+  mock-start    - Start mock MCP server in background\n\
+  mock-stop     - Stop mock MCP server\n\
+  clean         - Remove build artifacts\n"
 
 # Ports
 MOCK_PORT ?= 9023
@@ -39,6 +40,11 @@ build-client:
 	@echo "Building client npm package"
 	cd client && npm install --production && npm pack
 	@echo "Client package built"
+
+install:
+	@echo "Installing server Python dependencies..."
+	pip install -r server/requirements.txt
+	@echo "Dependencies installed"
 
 test-all:
 	@echo "Running all tests via unified test runner..."

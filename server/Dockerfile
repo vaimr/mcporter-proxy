@@ -10,8 +10,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod +x /usr/local/bin/gloves
 
 COPY server.py /app/server.py
+COPY requirements.txt /app/requirements.txt
 COPY mcp_env_map.json /app/mcp_env_map.json
 WORKDIR /app
+
+RUN pip install --no-cache-dir -r requirements.txt
 
 ENV MCPORTER_PROXY_PORT=8080
 ENV MCPORTER_PROXY_ALLOWED_TOOLS="atlassian.jira_*,atlassian.confluence_*,cognee.*"

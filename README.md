@@ -8,7 +8,20 @@ MCPorter is a CLI tool for calling MCP (Model Context Protocol) tools. The proxy
 
 ## Quick Start
 
-### 1. Initialize gloves
+### 1. Install dependencies
+
+**Server (Python):**
+```bash
+make install
+# or directly: pip install -r server/requirements.txt
+```
+
+**Client (Node.js):**
+```bash
+cd client && npm install
+```
+
+### 2. Initialize gloves
 
 ```bash
 # Install gloves CLI
@@ -19,7 +32,7 @@ chmod +x /usr/local/bin/gloves
 gloves bootstrap
 ```
 
-### 2. Configure agent and secrets
+### 3. Configure agent and secrets
 
 ```bash
 # Create agent identity
@@ -30,7 +43,7 @@ gloves --agent my-agent set "agents/my-agent/github/$(openssl rand -hex 32)" --v
 gloves --agent my-agent set "agents/my-agent/confluence/$(openssl rand -hex 32)" --value "your-confluence-token"
 ```
 
-### 3. Configure mcporter-proxy
+### 4. Configure mcporter-proxy
 
 Edit `server/mcp_env_map.json`:
 
@@ -185,6 +198,6 @@ services:
 
 ```bash
 make test          # Run all tests
-make test-server   # Run server unit tests
-make test-client   # Run client unit tests
+make test           # Run all tests
+make test-client    # Run client unit tests
 ```

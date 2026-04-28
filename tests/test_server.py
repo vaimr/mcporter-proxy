@@ -394,40 +394,6 @@ class TestGetAttachmentDownloadConfig(unittest.TestCase):
         self.assertIsNone(config)
 
 
-class TestGenerateMultipart(unittest.TestCase):
-    def test_generate_multipart_basic(self):
-        from server.server import generate_multipart
-
-        data = b"Hello World"
-        stream = io.BytesIO(data)
-        chunks = list(generate_multipart(stream, "test.txt", "text/plain"))
-
-        result = b"".join(chunks)
-        self.assertIn(b"--simpleboundary", result)
-        self.assertIn(
-            b'Content-Disposition: form-data; name="file"; filename="test.txt"', result
-        )
-        self.assertIn(b"Content-Type: text/plain", result)
-        self.assertIn(b"Hello World", result)
-        self.assertIn(b"--simpleboundary--", result)
-
-    def test_generate_multipart_custom_boundary(self):
-        from server.server import generate_multipart
-
-        data = b"Test content"
-        stream = io.BytesIO(data)
-        chunks = list(
-            generate_multipart(
-                stream, "file.pdf", "application/pdf", boundary="customboundary"
-            )
-        )
-
-        result = b"".join(chunks)
-        self.assertIn(b"--customboundary", result)
-        self.assertIn(b"--customboundary--", result)
-        self.assertNotIn(b"--simpleboundary", result)
-
-
 class TestDownloadAttachmentEndpoint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -571,8 +537,8 @@ exit 0
         conn.close()
 
 
-class TestStreamingMultipartParser(unittest.TestCase):
-    def test_extract_file_from_multipart_streaming_basic(self):
+class TestMultipartParsing(unittest.TestCase):
+    def test_extract_file_from_multipart_basic(self):
         from server.server import MCPorterProxyHandler
 
         mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
@@ -586,7 +552,7 @@ class TestStreamingMultipartParser(unittest.TestCase):
         )
         boundary = b"simpleboundary"
 
-        result = mock_handler._extract_file_from_multipart_streaming(body, boundary)
+        result = mock_handler._extract_file_from_multipart(body, boundary)
 
         self.assertIsNotNone(result)
         stream, filename = result
@@ -594,7 +560,7 @@ class TestStreamingMultipartParser(unittest.TestCase):
         content = stream.read()
         self.assertEqual(content, b"Hello World")
 
-    def test_extract_file_from_multipart_streaming_with_large_content(self):
+    def test_extract_file_from_multipart_with_large_content(self):
         from server.server import MCPorterProxyHandler
 
         mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
@@ -609,7 +575,7 @@ class TestStreamingMultipartParser(unittest.TestCase):
         )
         boundary = b"simpleboundary"
 
-        result = mock_handler._extract_file_from_multipart_streaming(body, boundary)
+        result = mock_handler._extract_file_from_multipart(body, boundary)
 
         self.assertIsNotNone(result)
         stream, filename = result
@@ -618,7 +584,7 @@ class TestStreamingMultipartParser(unittest.TestCase):
         self.assertEqual(len(content), len(large_content))
         self.assertEqual(content, large_content)
 
-    def test_extract_file_from_multipart_streaming_cyrillic_filename(self):
+    def test_extract_file_from_multipart_cyrillic_filename(self):
         from server.server import MCPorterProxyHandler
 
         mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
@@ -632,7 +598,7 @@ class TestStreamingMultipartParser(unittest.TestCase):
         )
         boundary = b"simpleboundary"
 
-        result = mock_handler._extract_file_from_multipart_streaming(body, boundary)
+        result = mock_handler._extract_file_from_multipart(body, boundary)
 
         self.assertIsNotNone(result)
         stream, filename = result
@@ -641,7 +607,7 @@ class TestStreamingMultipartParser(unittest.TestCase):
             "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442.webm",
         )
 
-    def test_extract_file_from_multipart_streaming_no_file(self):
+    def test_extract_file_from_multipart_no_file(self):
         from server.server import MCPorterProxyHandler
 
         mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
@@ -654,13 +620,13 @@ class TestStreamingMultipartParser(unittest.TestCase):
         )
         boundary = b"simpleboundary"
 
-        result = mock_handler._extract_file_from_multipart_streaming(body, boundary)
+        result = mock_handler._extract_file_from_multipart(body, boundary)
 
         self.assertIsNone(result)
 
 
 class TestUploadChunkedBehavior(unittest.TestCase):
-    def test_upload_via_rest_sends_in_chunks(self):
+    def test_upload_via_rest_sends_body_with_content_length(self):
         from unittest.mock import MagicMock, patch, call
         import io
         from server.server import upload_via_rest
@@ -690,12 +656,52 @@ class TestUploadChunkedBehavior(unittest.TestCase):
             )
 
             send_calls = mock_conn.send.call_args_list
-            self.assertGreater(len(send_calls), 1, "Should send multiple chunks")
+            self.assertEqual(len(send_calls), 1, "Should send body in single call")
 
-    def test_threshold_constant_defined(self):
-        from server.server import STREAMING_UPLOAD_THRESHOLD
+            putheader_calls = {
+                c[0][0].lower(): c[0][1] for c in mock_conn.putheader.call_args_list
+            }
+            self.assertIn("content-length", putheader_calls)
+            self.assertNotIn("transfer-encoding", putheader_calls)
 
-        self.assertEqual(STREAMING_UPLOAD_THRESHOLD, 1024 * 1024)
+
+class TestMultipartEncoder(unittest.TestCase):
+    def test_multipart_encoder_produces_valid_content_type(self):
+        from requests_toolbelt import MultipartEncoder
+        import io
+
+        encoder = MultipartEncoder(
+            fields={"file": ("test.txt", io.BytesIO(b"Hello"), "text/plain")}
+        )
+        self.assertIn("multipart/form-data", encoder.content_type)
+        self.assertIn("boundary=", encoder.content_type)
+
+    def test_multipart_encoder_iter_chunks(self):
+        from requests_toolbelt import MultipartEncoder
+        import io
+
+        large_data = b"x" * (300 * 1024)
+        encoder = MultipartEncoder(
+            fields={
+                "file": (
+                    "large.bin",
+                    io.BytesIO(large_data),
+                    "application/octet-stream",
+                )
+            }
+        )
+
+        chunks = []
+        while True:
+            chunk = encoder.read(262144)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        self.assertGreater(len(chunks), 1, "Should produce multiple chunks")
+
+        total_bytes = b"".join(chunks)
+        self.assertIn(b"large.bin", total_bytes)
+        self.assertIn(b"Content-Disposition", total_bytes)
 
 
 class TestUploadThresholdRouting(unittest.TestCase):
@@ -1626,6 +1632,248 @@ class TestUploadViaRestHTTPHeaders(unittest.TestCase):
             self.assertIn("Connection reset", str(context.exception))
 
 
+class TestUploadHeadersContentLength(unittest.TestCase):
+    """Test that upload_via_rest sends correct Content-Length header."""
+
+    def test_upload_via_rest_sends_content_length_not_chunked(self):
+        import io
+        from unittest.mock import MagicMock, patch
+        from server.server import upload_via_rest
+
+        config = {
+            "method": "POST",
+            "url_template": "https://example.com/rest/api/content/{page_id}/child/attachment",
+            "headers": {
+                "Authorization": "Bearer ${ATLASSIAN_TOKEN}",
+                "X-Atlassian-Token": "no-check",
+            },
+        }
+        args = {"page_id": "12345", "name": "test.md"}
+        file_stream = io.BytesIO(b"test content")
+        filename = "test.md"
+        content_type = "application/octet-stream"
+        token = "primary_token"
+        extra_secrets = {"ATLASSIAN_TOKEN": "MySecretToken123"}
+
+        mock_conn = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.reason = "OK"
+        mock_response.read.side_effect = [b'{"success": true}', b""]
+        mock_conn.getresponse.return_value = mock_response
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            upload_via_rest(
+                config, args, file_stream, filename, content_type, token, extra_secrets
+            )
+
+            putheader_calls = {
+                c[0][0].lower(): c[0][1] for c in mock_conn.putheader.call_args_list
+            }
+            self.assertIn(
+                "content-length",
+                putheader_calls,
+                f"Content-Length should be sent. Got: {putheader_calls}",
+            )
+            self.assertNotIn(
+                "transfer-encoding",
+                putheader_calls,
+                f"Transfer-Encoding should not be sent. Got: {putheader_calls}",
+            )
+
+
+class TestStreamingUpload(unittest.TestCase):
+    """Test streaming upload - data flows from client to upstream without full buffering."""
+
+    def test_streaming_upload_does_not_buffer_entire_file(self):
+        import io
+        from unittest.mock import MagicMock, patch, call
+        from server.server import upload_via_rest_streaming
+
+        config = {
+            "method": "POST",
+            "url_template": "https://example.com/upload",
+            "headers": {"Authorization": "Bearer {token}"},
+        }
+        args = {}
+        large_content = b"x" * (1024 * 1024)
+        file_stream = io.BytesIO(large_content)
+        filename = "large.bin"
+        content_type = "application/octet-stream"
+        token = "test_token"
+        extra_secrets = {}
+
+        mock_conn = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.side_effect = [b'{"success": true}', b""]
+        mock_conn.getresponse.return_value = mock_response
+
+        sent_chunks = []
+
+        def capture_send(data):
+            sent_chunks.append(len(data))
+
+        mock_conn.send.side_effect = capture_send
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            upload_via_rest_streaming(
+                config, args, file_stream, filename, content_type, token, extra_secrets
+            )
+
+        total_sent = sum(sent_chunks)
+        self.assertGreater(
+            total_sent,
+            len(large_content),
+            "Should send at least the file content (plus chunked encoding overhead)",
+        )
+        self.assertGreater(
+            len(sent_chunks), 1, "Should send in multiple chunks for streaming"
+        )
+
+    def test_streaming_upload_uses_chunked_transfer_encoding(self):
+        import io
+        from unittest.mock import MagicMock, patch
+        from server.server import upload_via_rest_streaming
+
+        config = {
+            "method": "POST",
+            "url_template": "https://example.com/upload",
+            "headers": {"Authorization": "Bearer {token}"},
+        }
+        args = {}
+        file_stream = io.BytesIO(b"test content")
+        filename = "test.bin"
+        content_type = "application/octet-stream"
+        token = "test_token"
+        extra_secrets = {}
+
+        mock_conn = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.side_effect = [b'{"success": true}', b""]
+        mock_conn.getresponse.return_value = mock_response
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            upload_via_rest_streaming(
+                config, args, file_stream, filename, content_type, token, extra_secrets
+            )
+
+        putheader_calls = {
+            c[0][0].lower(): c[0][1] for c in mock_conn.putheader.call_args_list
+        }
+        self.assertIn("transfer-encoding", putheader_calls)
+        self.assertNotIn("content-length", putheader_calls)
+        self.assertEqual(putheader_calls["transfer-encoding"], "chunked")
+
+    def test_streaming_upload_sends_correct_chunked_format(self):
+        import io
+        from unittest.mock import MagicMock, patch
+        from server.server import upload_via_rest_streaming
+
+        config = {
+            "method": "POST",
+            "url_template": "https://example.com/upload",
+            "headers": {"Authorization": "Bearer {token}"},
+        }
+        args = {}
+        file_stream = io.BytesIO(b"ABC")
+        filename = "test.txt"
+        content_type = "text/plain"
+        token = "test_token"
+        extra_secrets = {}
+
+        mock_conn = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.side_effect = [b'{"success": true}', b""]
+        mock_conn.getresponse.return_value = mock_response
+
+        sent_data = b""
+
+        def capture_send(data):
+            nonlocal sent_data
+            sent_data += data
+
+        mock_conn.send.side_effect = capture_send
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            upload_via_rest_streaming(
+                config, args, file_stream, filename, content_type, token, extra_secrets
+            )
+
+        self.assertIn(
+            b"3\r\nABC\r\n",
+            sent_data,
+            "Should have chunked format: length\\r\\ndata\\r\\n",
+        )
+        self.assertTrue(
+            sent_data.endswith(b"0\r\n\r\n"),
+            "Should end with final chunk 0\r\n\r\n",
+        )
+
+
+class TestChunkedFileReference(unittest.TestCase):
+    def test_chunked_file_reference_read_returns_correct_data(self):
+        from server.server import ChunkedFileReference
+
+        chunks = [(b"Hello ", 6), (b"World!", 6)]
+        ref = ChunkedFileReference(chunks, total_size=12)
+        data = ref.read()
+        self.assertEqual(data, b"Hello World!")
+        self.assertEqual(ref.read(), b"")
+
+    def test_chunked_file_reference_read_with_size(self):
+        from server.server import ChunkedFileReference
+
+        chunks = [(b"Hello World!", 12)]
+        ref = ChunkedFileReference(chunks, total_size=12)
+        part = ref.read(5)
+        self.assertEqual(part, b"Hello")
+        part = ref.read(10)
+        self.assertEqual(part, b" World!")
+
+    def test_chunked_file_reference_iteration(self):
+        from server.server import ChunkedFileReference
+
+        chunks = [(b"AB", 2), (b"CD", 2), (b"EF", 2)]
+        ref = ChunkedFileReference(chunks, total_size=6)
+        result = b"".join(ref.read_chunk())
+        self.assertEqual(result, b"ABCDEF")
+
+    def test_chunked_file_reference_iteration(self):
+        from server.server import ChunkedFileReference
+
+        chunks = [(b"AB", 2), (b"CD", 2), (b"EF", 2)]
+        ref = ChunkedFileReference(chunks, total_size=6)
+        result = b"".join(ref.read_chunk())
+        self.assertEqual(result, b"ABCDEF")
+
+    def test_streaming_parser_no_full_copy(self):
+        from server.server import MCPorterProxyHandler
+
+        mock_handler = MCPorterProxyHandler.__new__(MCPorterProxyHandler)
+
+        file_content = b"X" * (512 * 1024)
+        body = (
+            b"--simpleboundary\r\n"
+            b'Content-Disposition: form-data; name="file"; filename="test.bin"\r\n'
+            b"Content-Type: application/octet-stream\r\n\r\n"
+            + file_content
+            + b"\r\n--simpleboundary--\r\n"
+        )
+        boundary = b"simpleboundary"
+
+        result = mock_handler._extract_file_from_multipart(body, boundary)
+
+        self.assertIsNotNone(result)
+        stream, filename = result
+
+        read_data = stream.read()
+        self.assertEqual(read_data, file_content)
+        self.assertEqual(len(read_data), len(file_content))
+
+
 class TestExecuteUploadMcptype(unittest.TestCase):
     """Test that _execute_upload correctly uses mcptype for token resolution."""
 
@@ -1648,12 +1896,12 @@ class TestExecuteUploadMcptype(unittest.TestCase):
             patch("server.server.resolve_extra_secrets") as mock_resolve_extra_secrets,
             patch("server.server.get_attachment_upload_config") as mock_get_config,
             patch("server.server.get_env_vars_for_mcptype") as mock_get_env_vars,
-            patch("server.server.upload_via_rest") as mock_upload_via_rest,
+            patch("server.server.upload_via_rest") as mock_upload,
         ):
             mock_resolve_token.return_value = "resolved_secret_token"
             mock_resolve_extra_secrets.return_value = {}
             mock_get_env_vars.return_value = ["CONFLUENCE_API_TOKEN"]
-            mock_upload_via_rest.return_value = {"success": True}
+            mock_upload.return_value = {"success": True}
 
             mock_get_config.return_value = {
                 "type": "rest_api",
@@ -1697,7 +1945,7 @@ class TestExecuteUploadMcptype(unittest.TestCase):
                 "mcptype should be 'confluence' as passed explicitly",
             )
 
-            upload_call_args = mock_upload_via_rest.call_args
+            upload_call_args = mock_upload.call_args
             extra_secrets_passed = upload_call_args[0][6]
             print(f"extra_secrets passed to upload_via_rest: {extra_secrets_passed}")
             self.assertIn(
@@ -1718,13 +1966,13 @@ class TestExecuteUploadMcptype(unittest.TestCase):
             patch("server.server.resolve_token") as mock_resolve_token,
             patch("server.server.resolve_extra_secrets") as mock_resolve_extra_secrets,
             patch("server.server.get_attachment_upload_config") as mock_get_config,
-            patch("server.server.upload_via_rest") as mock_upload_via_rest,
+            patch("server.server.upload_via_rest") as mock_upload,
         ):
             mock_resolve_token.return_value = "resolved_secret_token"
             mock_resolve_extra_secrets.return_value = {
                 "ATLASSIAN_TOKEN": "gloves_token_123"
             }
-            mock_upload_via_rest.return_value = {"success": True}
+            mock_upload.return_value = {"success": True}
 
             mock_get_config.return_value = {
                 "type": "rest_api",
