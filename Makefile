@@ -33,7 +33,7 @@ build: build-server build-client
 
 build-server:
 	@echo "Building server Docker image: $(IMAGE_NAME):$(IMAGE_TAG)"
-	cd server && docker build -t "$(IMAGE_NAME):$(IMAGE_TAG)" .
+	docker build -t "$(IMAGE_NAME):$(IMAGE_TAG)" --progress=plain .
 	@echo "Server image built"
 
 build-client:

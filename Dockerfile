@@ -1,11 +1,12 @@
-FROM python:3.12-slim
+FROM python:slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade
+RUN apt-get install -y --no-install-recommends \
     nodejs \
     npm \
     curl \
-    && rm -rf /var/lib/apt/lists/* /root/.cache \
-    && npm install -g mcporter \
+    && rm -rf /var/lib/apt/lists/* /root/.cache
+RUN npm install -g mcporter \
     && curl -fsSL https://github.com/heyAyushh/gloves/releases/download/v0.5.11/gloves-0.5.11-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C /usr/local/bin \
     && chmod +x /usr/local/bin/gloves
 
